@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  transition: none !important;
+  animation: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+body {
+  background-color: #ffffff;
+  color: #000000;
+  margin: 0;
+  padding: 12px;
+}
