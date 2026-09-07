@@ -43,6 +43,7 @@ from src.models.framework_pipeline import SelfHealingConceptDriftFramework
 from src.models.boosted_adaptive_forest import BoostedAdaptiveForest
 from src.models.self_healing_meta_ensemble import SelfHealingMetaEnsemble
 from src.models.xgboost_adaptive import GPUAcceleratedAdaptiveXGBoost
+from src.models.adaptive_svm import AdaptiveOnlineSVM
 
 
 class TelemetryEngine:
@@ -260,6 +261,8 @@ def build_model(model_key: str, detector_name: str):
         return GPUAcceleratedAdaptiveXGBoost(n_estimators=30, drift_detector=det, device="cuda", n_jobs=32, name="Adaptive XGBoost (RTX 5070 CUDA)")
     elif model_key == "full_retrain":
         return FullRetrainingModel(drift_detector=det, name="Full Retraining")
+    elif model_key == "adaptive_svm":
+        return AdaptiveOnlineSVM(drift_detector=det, name="Adaptive Online SVM (Incremental Margin)")
     elif model_key == "selective":
         return SelectiveAdaptiveEnsemble(n_estimators=25, replacement_ratio=0.3, drift_detector=det, name="Selective Adaptive Ensemble")
     else:

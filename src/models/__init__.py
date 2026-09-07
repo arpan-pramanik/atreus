@@ -7,6 +7,7 @@ from src.models.xgboost_adaptive import GPUAcceleratedAdaptiveXGBoost
 from src.models.boosted_adaptive_forest import BoostedAdaptiveForest
 from src.models.self_healing_meta_ensemble import SelfHealingMetaEnsemble
 from src.models.framework_pipeline import SelfHealingConceptDriftFramework
+from src.models.adaptive_svm import AdaptiveOnlineSVM
 
 __all__ = [
     "StaticStreamingModel",
@@ -17,4 +18,5 @@ __all__ = [
     "ResearchBoostedEnsemble",
     "SelfHealingMetaEnsemble",
     "SelfHealingConceptDriftFramework",
+    "AdaptiveOnlineSVM",
 ]

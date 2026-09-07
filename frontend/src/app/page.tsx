@@ -499,6 +499,7 @@ export default function ControlPanel() {
                   <option value="boosted_forest">Boosted ARF-DWM Forest (Shadow Trees)</option>
                   <option value="dual_memory">Self-Healing Dual-Memory Meta-Ensemble</option>
                   <option value="xgboost_cuda">Hardware-Accelerated Adaptive XGBoost (RTX 5070 CUDA)</option>
+                  <option value="adaptive_svm">Adaptive Online SVM (Incremental Margin)</option>
                   <option value="full_retrain">Full Retraining (Baseline)</option>
                   <option value="selective">Selective Adaptive Ensemble (Standard)</option>
                   <option value="static">Static Streaming Model (No Adapt)</option>

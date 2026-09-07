@@ -54,3 +54,14 @@ def test_framework_pipeline():
     res_meta = evaluator.evaluate(meta_model, X, y, true_drifts=drift_points)
     assert res_meta["summary"]["accuracy"] > 0.0
     assert res_meta["summary"]["adaptation_time_sec"] >= 0.0
+
+    # 6. Adaptive Online SVM
+    from src.models.adaptive_svm import AdaptiveOnlineSVM
+    svm_model = AdaptiveOnlineSVM(
+        drift_detector=ADWINDetector(delta=0.01),
+        buffer_size=150,
+    )
+    res_svm = evaluator.evaluate(svm_model, X, y, true_drifts=drift_points)
+    assert res_svm["summary"]["accuracy"] > 0.0
+    assert res_svm["summary"]["adaptation_time_sec"] >= 0.0
+
