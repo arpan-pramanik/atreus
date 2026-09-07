@@ -397,6 +397,36 @@
     </div>
   </div>
 
+  <!-- Live Trajectory Chart -->
+  <div class="border-box">
+    <div class="box-header">
+      <span>LIVE STREAM ACCURACY & CONCEPT DRIFT TRAJECTORY (SVG)</span>
+      <div style="display: flex; gap: 12px; align-items: center;">
+        <span style="font-size: 10px;">— SOLID: CUMULATIVE ACC | ··· DOTTED: ROLLING WINDOW | ╎ DASH: DRIFT SIGNAL</span>
+        <button type="button" onclick="exportTelemetryData()" style="width: auto; padding: 2px 8px;">EXPORT TELEMETRY (JSON)</button>
+      </div>
+    </div>
+    <div style="width: 100%; height: 160px; border: 1px solid #000000; background-color: #ffffff; position: relative;">
+      <svg id="trajectory-svg" width="100%" height="160" style="display: block;">
+        <!-- Grid Ticks -->
+        <line x1="40" y1="20" x2="100%" y2="20" stroke="#eeeeee" stroke-width="1" />
+        <text x="5" y="24" font-size="9" fill="#888888">100%</text>
+        <line x1="40" y1="55" x2="100%" y2="55" stroke="#eeeeee" stroke-width="1" />
+        <text x="5" y="59" font-size="9" fill="#888888">75%</text>
+        <line x1="40" y1="90" x2="100%" y2="90" stroke="#eeeeee" stroke-width="1" />
+        <text x="5" y="94" font-size="9" fill="#888888">50%</text>
+        <line x1="40" y1="125" x2="100%" y2="125" stroke="#eeeeee" stroke-width="1" />
+        <text x="5" y="129" font-size="9" fill="#888888">25%</text>
+        <line x1="40" y1="145" x2="100%" y2="145" stroke="#000000" stroke-width="1" />
+        
+        <!-- Trajectory Paths -->
+        <g id="drift-lines-group"></g>
+        <path id="cum-acc-path" d="" fill="none" stroke="#000000" stroke-width="2" />
+        <path id="win-acc-path" d="" fill="none" stroke="#000000" stroke-width="1" stroke-dasharray="3,3" />
+      </svg>
+    </div>
+  </div>
+
   <!-- Deep Telemetry: Component Modifications & Feature Rankings -->
   <div class="grid-2">
     <!-- Component Modifications Table -->
@@ -548,6 +578,14 @@
           `).join('');
         }
 
+        // Update Live Trajectory SVG Chart
+        if (data.trajectory && data.trajectory.length > 0) {
+          renderTrajectoryChart(data.trajectory, data.total_samples);
+        }
+
+        // Cache last data snapshot for export
+        window.LAST_TELEMETRY_DATA = data;
+
         // Update Console Logs
         const consoleEl = document.getElementById('log-console');
         if (data.logs && data.logs.length > 0) {
@@ -565,6 +603,68 @@
         }
       })
       .catch(() => {});
+  }
+
+  function renderTrajectoryChart(trajectory, totalSamples) {
+    const svg = document.getElementById('trajectory-svg');
+    const width = svg.clientWidth || 800;
+    const height = 160;
+    const padX = 45;
+    const padTop = 15;
+    const padBottom = 20;
+    const plotW = Math.max(10, width - padX - 15);
+    const plotH = height - padTop - padBottom;
+
+    const maxSample = Math.max(totalSamples || 1, trajectory[trajectory.length - 1].sample);
+
+    const getX = (sample) => padX + (sample / maxSample) * plotW;
+    const getY = (accPct) => padTop + plotH - ((accPct / 100) * plotH);
+
+    let dCum = '';
+    let dWin = '';
+    const driftLinesGroup = document.getElementById('drift-lines-group');
+    driftLinesGroup.innerHTML = '';
+
+    trajectory.forEach((pt, i) => {
+      const x = getX(pt.sample);
+      const yCum = getY(pt.cumulative_acc);
+      const yWin = getY(pt.window_acc);
+
+      if (i === 0) {
+        dCum += `M ${x} ${yCum}`;
+        dWin += `M ${x} ${yWin}`;
+      } else {
+        dCum += ` L ${x} ${yCum}`;
+        dWin += ` L ${x} ${yWin}`;
+      }
+
+      if (pt.drift === 1) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x);
+        line.setAttribute('y1', padTop);
+        line.setAttribute('x2', x);
+        line.setAttribute('y2', height - padBottom);
+        line.setAttribute('stroke', '#000000');
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-dasharray', '2,2');
+        driftLinesGroup.appendChild(line);
+      }
+    });
+
+    document.getElementById('cum-acc-path').setAttribute('d', dCum);
+    document.getElementById('win-acc-path').setAttribute('d', dWin);
+  }
+
+  function exportTelemetryData() {
+    if (!window.LAST_TELEMETRY_DATA) return alert('No telemetry data to export yet.');
+    const jsonStr = JSON.stringify(window.LAST_TELEMETRY_DATA, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `streaming_telemetry_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function startStreaming() {
