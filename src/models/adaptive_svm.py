@@ -114,7 +114,8 @@ class AdaptiveOnlineSVM:
             self.buffer_y.pop(0)
 
         # Feed error to drift detector
-        drift_detected = self.drift_detector.update(err)
+        res = self.drift_detector.update(err)
+        drift_detected = res[0] if isinstance(res, tuple) else bool(res)
 
         if drift_detected:
             t0 = time.perf_counter()
