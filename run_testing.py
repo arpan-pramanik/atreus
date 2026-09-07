@@ -17,6 +17,7 @@ from src.models.full_retrain import FullRetrainingModel
 from src.models.selective_adaptive import SelectiveAdaptiveEnsemble
 from src.models.xgboost_adaptive import GPUAcceleratedAdaptiveXGBoost
 from src.models.boosted_adaptive_forest import BoostedAdaptiveForest
+from src.models.adaptive_svm import AdaptiveOnlineSVM
 from src.evaluation.evaluator import StreamEvaluator
 from src.visualizer import plot_drift_trajectories, plot_performance_and_cost_comparison
 
@@ -76,6 +77,11 @@ def run_actual_dataset_test(dataset_loader, dataset_name: str, warmup_samples: i
             device="cuda",
             n_jobs=32,
             name="Adaptive XGBoost (GPU RTX 5070)",
+        ),
+        AdaptiveOnlineSVM(
+            drift_detector=ADWINDetector(delta=0.005),
+            buffer_size=300,
+            name="Adaptive Online SVM (Incremental)",
         ),
     ]
 

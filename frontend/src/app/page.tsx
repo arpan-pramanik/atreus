@@ -368,19 +368,21 @@ export default function ControlPanel() {
         <div className="grid grid-cols-4 gap-2.5">
           <div className="border border-black p-2">
             <div className="text-[10px] uppercase text-neutral-600">CPU ARCHITECTURE</div>
-            <div className="text-[13px] font-bold mt-0.5">{hardware?.cpu?.model || "AMD Ryzen 9 9955HX"}</div>
-            <div className="text-[10px] text-neutral-600">{hardware?.cpu?.threads || 32} Execution Threads</div>
+            <div className="text-[13px] font-bold mt-0.5">{hardware?.cpu?.model || "Detecting CPU..."}</div>
+            <div className="text-[10px] text-neutral-600">
+              {hardware?.cpu?.threads ? `${hardware.cpu.threads} Execution Threads` : "Querying threads..."}
+            </div>
           </div>
           <div className="border border-black p-2">
             <div className="text-[10px] uppercase text-neutral-600">SYSTEM MEMORY (RAM)</div>
             <div className="text-[13px] font-bold mt-0.5">
-              {hardware ? `${(hardware.cpu.ram_used_mb / 1024).toFixed(1)} / ${(hardware.cpu.ram_total_mb / 1024).toFixed(1)} GB` : "Loading..."}
+              {hardware ? `${(hardware.cpu.ram_used_mb / 1024).toFixed(1)} / ${(hardware.cpu.ram_total_mb / 1024).toFixed(1)} GB` : "Querying RAM..."}
             </div>
             <div className="text-[10px] text-neutral-600">Util: {hardware?.cpu?.ram_util_pct || 0}%</div>
           </div>
           <div className="border border-black p-2">
             <div className="text-[10px] uppercase text-neutral-600">GPU ACCELERATOR</div>
-            <div className="text-[13px] font-bold mt-0.5">{hardware?.gpu?.model || "NVIDIA GeForce RTX 5070"}</div>
+            <div className="text-[13px] font-bold mt-0.5">{hardware?.gpu?.model || "Detecting GPU..."}</div>
             <div className="text-[10px] text-neutral-600">
               CUDA: {hardware?.gpu?.cuda_available ? "READY (DEVICE 0)" : "INITIALIZING"}
             </div>
@@ -388,7 +390,7 @@ export default function ControlPanel() {
           <div className="border border-black p-2">
             <div className="text-[10px] uppercase text-neutral-600">GPU VRAM & LOAD</div>
             <div className="text-[13px] font-bold mt-0.5">
-              {hardware ? `${hardware.gpu.vram_used_mb} / ${hardware.gpu.vram_total_mb} MiB` : "0 / 8151 MiB"}
+              {hardware ? `${hardware.gpu.vram_used_mb} / ${hardware.gpu.vram_total_mb} MiB` : "Querying VRAM..."}
             </div>
             <div className="text-[10px] text-neutral-600">Core Load: {hardware?.gpu?.gpu_util_pct || 0}%</div>
           </div>

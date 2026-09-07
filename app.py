@@ -133,6 +133,16 @@ def get_hardware_info() -> Dict[str, Any]:
         return CACHED_HARDWARE
 
     cpu_count = os.cpu_count() or 32
+    cpu_model = "AMD Ryzen 9 9955HX"
+    try:
+        with open("/proc/cpuinfo", "r") as f:
+            for line in f:
+                if "model name" in line:
+                    cpu_model = line.split(":", 1)[1].strip()
+                    break
+    except Exception:
+        pass
+
     mem_total_mb = 31343
     mem_avail_mb = 28000
     try:
@@ -174,7 +184,7 @@ def get_hardware_info() -> Dict[str, Any]:
 
     CACHED_HARDWARE = {
         "cpu": {
-            "model": "AMD Ryzen 9 9955HX (16 Cores / 32 Threads)",
+            "model": f"{cpu_model} ({cpu_count} Threads)",
             "threads": cpu_count,
             "ram_total_mb": mem_total_mb,
             "ram_used_mb": mem_used_mb,
