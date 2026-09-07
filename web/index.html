@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Streaming Concept Drift Control Panel</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #000000;
+      background-color: transparent;
+      transition: none !important;
+      animation: none !important;
+      box-shadow: none !important;
+      border-radius: 0 !important;
+    }
+
+    body {
+      background-color: #ffffff;
+      padding: 12px;
+    }
+
+    /* Top Grid Layout */
+    .container {
+      max-width: 1500px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .border-box {
+      border: 1px solid #000000;
+      padding: 10px;
+      background-color: #ffffff;
+    }
+
+    .box-header {
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid #000000;
+      padding-bottom: 6px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Layout Grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    /* Hardware Telemetry Strip */
+    .hw-metric {
+      border: 1px solid #000000;
+      padding: 6px 8px;
+    }
+    .hw-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #333333;
+    }
+    .hw-val {
+      font-size: 13px;
+      font-weight: bold;
+      margin-top: 2px;
+    }
+
+    /* Forms, Selects & Buttons */
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+
+    select, input[type="text"], input[type="number"], textarea, button {
+      width: 100%;
+      border: 1px solid #000000;
+      padding: 6px 8px;
+      background-color: #ffffff;
+      outline: none;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+
+    button:hover {
+      background-color: #000000;
+      color: #ffffff;
+    }
+
+    button.btn-active {
+      background-color: #000000;
+      color: #ffffff;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    /* Pipeline Status Flow */
+    .pipeline-strip {
+      display: flex;
+      border: 1px solid #000000;
+      margin-bottom: 8px;
+    }
+    .pipeline-step {
+      flex: 1;
+      padding: 6px;
+      text-align: center;
+      border-right: 1px solid #000000;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+    .pipeline-step:last-child {
+      border-right: none;
+    }
+    .pipeline-step.active {
+      background-color: #000000;
+      color: #ffffff;
+      font-weight: bold;
+    }
+
+    /* Stat Cards */
+    .stat-card {
+      border: 1px solid #000000;
+      padding: 8px;
+    }
+    .stat-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      border-bottom: 1px solid #cccccc;
+      padding-bottom: 2px;
+      margin-bottom: 4px;
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: bold;
+    }
+    .stat-sub {
+      font-size: 10px;
+      color: #555555;
+      margin-top: 2px;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    th, td {
+      border: 1px solid #000000;
+      padding: 4px 6px;
+      font-size: 11px;
+    }
+    th {
+      background-color: #f2f2f2;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+
+    /* Terminal Console Output */
+    #log-console {
+      height: 220px;
+      overflow-y: scroll;
+      border: 1px solid #000000;
+      background-color: #ffffff;
+      padding: 6px 8px;
+      font-family: monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-line {
+      margin-bottom: 2px;
+    }
+    .log-warn {
+      font-weight: bold;
+      text-decoration: underline;
+    }
+    .log-err {
+      background-color: #000000;
+      color: #ffffff;
+      padding: 0 4px;
+    }
+
+    /* Tabs / Drawer for Add Dataset */
+    #add-dataset-panel {
+      display: none;
+      margin-top: 10px;
+      border: 1px dashed #000000;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Hardware & Device Telemetry Bar -->
+  <div class="border-box">
+    <div class="box-header">
+      <span>HARDWARE & COMPUTE ENGINE TELEMETRY</span>
+      <span id="active-device-indicator">ACTIVE BINDING: STANDBY</span>
+    </div>
+    <div class="grid-4">
+      <div class="hw-metric">
+        <div class="hw-label">CPU ARCHITECTURE</div>
+        <div class="hw-val" id="hw-cpu-model">AMD Ryzen 9 9955HX</div>
+        <div class="stat-sub" id="hw-cpu-threads">32 Execution Threads</div>
+      </div>
+      <div class="hw-metric">
+        <div class="hw-label">SYSTEM MEMORY (RAM)</div>
+        <div class="hw-val" id="hw-ram">Loading...</div>
+        <div class="stat-sub" id="hw-ram-util">Util: 0%</div>
+      </div>
+      <div class="hw-metric">
+        <div class="hw-label">GPU ACCELERATOR</div>
+        <div class="hw-val" id="hw-gpu-model">NVIDIA GeForce RTX 5070</div>
+        <div class="stat-sub" id="hw-cuda-status">CUDA: DETECTING...</div>
+      </div>
+      <div class="hw-metric">
+        <div class="hw-label">GPU VRAM & LOAD</div>
+        <div class="hw-val" id="hw-gpu-vram">0 / 8151 MiB</div>
+        <div class="stat-sub" id="hw-gpu-util">Core Load: 0%</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Stages Bar -->
+  <div class="pipeline-strip">
+    <div class="pipeline-step" id="step-idle">1. STANDBY</div>
+    <div class="pipeline-step" id="step-load">2. DATA INGESTION</div>
+    <div class="pipeline-step" id="step-warmup">3. WARMUP TRAINING</div>
+    <div class="pipeline-step" id="step-stream">4. STREAM SCORING</div>
+    <div class="pipeline-step" id="step-detect">5. DRIFT MONITORING</div>
+    <div class="pipeline-step" id="step-adapt">6. COMPONENT ADAPTATION</div>
+    <div class="pipeline-step" id="step-complete">7. COMPLETED</div>
+  </div>
+
+  <!-- Configuration and Controls -->
+  <div class="grid-2">
+    <!-- Stream & Model Configuration -->
+    <div class="border-box">
+      <div class="box-header">
+        <span>STREAM & MODEL CONFIGURATION</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div>
+          <label for="dataset-select">Streaming Dataset</label>
+          <select id="dataset-select">
+            <option value="sea">SEA Concepts Benchmark (10,000 Samples) [Abrupt Drift]</option>
+            <option value="agrawal">Agrawal Stream Benchmark (10,000 Samples) [Subspace Shift]</option>
+            <option value="electricity">NSW Electricity Market (45,312 Samples) [Real Recurring]</option>
+            <option value="covertype">Forest Covertype Stream (30,000 Samples) [Real Multi-Class]</option>
+            <option value="airlines">Airlines Flight Delay Stream (15,000 Samples) [Real Shift]</option>
+            <option value="hf_adult">Hugging Face: Adult Census Income (32,561 Samples)</option>
+            <option value="hf_bank">Hugging Face: Bank Marketing Stream (10,578 Samples)</option>
+            <option value="hf_credit">Hugging Face: Credit Default Risk (13,272 Samples)</option>
+          </select>
+        </div>
+
+        <div>
+          <button type="button" id="toggle-add-dataset-btn" onclick="toggleAddDataset()">+ ADD DATASET (CSV / HUGGING FACE)</button>
+        </div>
+
+        <!-- Add Dataset Panel -->
+        <div id="add-dataset-panel">
+          <div style="font-weight: bold; margin-bottom: 6px;">OPTION A: IMPORT FROM HUGGING FACE HUB</div>
+          <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+            <input type="text" id="hf-id-input" placeholder="e.g. scikit-learn/adult-census-income">
+            <button type="button" onclick="uploadHfDataset()" style="width: 140px;">FETCH & PROCEED</button>
+          </div>
+          <div style="font-weight: bold; margin-bottom: 6px;">OPTION B: UPLOAD CUSTOM CSV</div>
+          <input type="file" id="csv-file-input" accept=".csv" style="margin-bottom: 6px;">
+          <button type="button" onclick="uploadCsvDataset()">LOAD CSV & PROCEED</button>
+          <div id="upload-status" style="margin-top: 6px; font-weight: bold;"></div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <label for="model-select">Model Architecture</label>
+            <select id="model-select">
+              <option value="proposed">Proposed Selective Adapt (RF + SVM + Online Scaler)</option>
+              <option value="boosted_forest">Boosted ARF-DWM Forest (Micro-Detectors & Shadow Trees)</option>
+              <option value="dual_memory">Self-Healing Dual-Memory Meta-Ensemble (STM/LTM Recall)</option>
+              <option value="xgboost_cuda">Hardware-Accelerated Adaptive XGBoost (RTX 5070 CUDA)</option>
+              <option value="full_retrain">Full Retraining (Baseline)</option>
+              <option value="selective">Selective Adaptive Ensemble (Standard)</option>
+              <option value="static">Static Streaming Model (No Adaptation)</option>
+            </select>
+          </div>
+          <div>
+            <label for="detector-select">Drift Detector</label>
+            <select id="detector-select">
+              <option value="adwin">ADWIN (Adaptive Sliding Window)</option>
+              <option value="ddm">DDM (Drift Detection Method)</option>
+              <option value="eddm">EDDM (Early Drift Detection Method)</option>
+              <option value="page_hinkley">Page-Hinkley Cumulative Sum</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div>
+            <label for="warmup-input">Warmup Training Samples</label>
+            <input type="number" id="warmup-input" value="500" min="100" max="5000">
+          </div>
+          <div>
+            <label for="window-input">Rolling Metrics Window</label>
+            <input type="number" id="window-input" value="200" min="50" max="2000">
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" id="start-btn" onclick="startStreaming()" style="background-color: #000000; color: #ffffff;">START STREAMING EXECUTION</button>
+          <button type="button" id="stop-btn" onclick="stopStreaming()" style="width: 140px;">HALT STREAM</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Primary Metrics Panel -->
+    <div class="border-box">
+      <div class="box-header">
+        <span>STREAMING PERFORMANCE & ADAPTATION METRICS</span>
+        <span id="run-status-badge">STATUS: IDLE</span>
+      </div>
+      <div class="grid-3" style="margin-bottom: 8px;">
+        <div class="stat-card">
+          <div class="stat-title">CUMULATIVE ACCURACY</div>
+          <div class="stat-value" id="val-accuracy">0.00%</div>
+          <div class="stat-sub">Overall Stream Accuracy</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">WINDOWED ACCURACY</div>
+          <div class="stat-value" id="val-window-acc">0.00%</div>
+          <div class="stat-sub">Last Rolling Window</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">F1-SCORE</div>
+          <div class="stat-value" id="val-f1">0.00%</div>
+          <div class="stat-sub">Harmonic Precision/Recall</div>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="stat-card">
+          <div class="stat-title">PROCESSED SAMPLES</div>
+          <div class="stat-value" id="val-samples">0 / 0</div>
+          <div class="stat-sub" id="val-progress-pct">0.0% Complete</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">DRIFT SIGNALS</div>
+          <div class="stat-value" id="val-drift-count">0</div>
+          <div class="stat-sub">Distribution Shifts</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">ADAPTATIONS</div>
+          <div class="stat-value" id="val-adapt-count">0</div>
+          <div class="stat-sub" id="val-components-mod">0 Components Modified</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">THROUGHPUT</div>
+          <div class="stat-value" id="val-throughput">0.0</div>
+          <div class="stat-sub" id="val-adapt-time">Adapt Latency: 0.0ms</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deep Telemetry: Component Modifications & Feature Rankings -->
+  <div class="grid-2">
+    <!-- Component Modifications Table -->
+    <div class="border-box">
+      <div class="box-header">
+        <span>MODEL COMPONENT MODIFICATIONS & REPLACEMENTS LOG</span>
+      </div>
+      <div style="max-height: 180px; overflow-y: scroll;">
+        <table id="modifications-table">
+          <thead>
+            <tr>
+              <th>Sample #</th>
+              <th>Event Trigger</th>
+              <th>Components Modified</th>
+              <th>Latency</th>
+              <th>Device Executed</th>
+            </tr>
+          </thead>
+          <tbody id="modifications-tbody">
+            <tr><td colspan="5" style="text-align: center; color: #777;">No adaptation events recorded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Feature Importance & Online Selection Table -->
+    <div class="border-box">
+      <div class="box-header">
+        <span>ONLINE FEATURE SELECTION & RELEVANCE TRACKER</span>
+      </div>
+      <div style="max-height: 180px; overflow-y: scroll;">
+        <table id="features-table">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Feature Identifier</th>
+              <th>Index</th>
+              <th>Active In Ensemble</th>
+            </tr>
+          </thead>
+          <tbody id="features-tbody">
+            <tr><td colspan="4" style="text-align: center; color: #777;">Feature tracking initializes during warmup.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-Time Process Execution Console -->
+  <div class="border-box">
+    <div class="box-header">
+      <span>REAL-TIME PROCESS EXECUTION CONSOLE</span>
+      <button type="button" onclick="clearConsole()" style="width: auto; padding: 2px 6px;">CLEAR LOG</button>
+    </div>
+    <div id="log-console"></div>
+  </div>
+
+</div>
+
+<script>
+  let pollingInterval = null;
+
+  function toggleAddDataset() {
+    const p = document.getElementById('add-dataset-panel');
+    p.style.display = p.style.display === 'block' ? 'none' : 'block';
+  }
+
+  function updatePipelineStrip(stage) {
+    const steps = ['idle', 'load', 'warmup', 'stream', 'detect', 'adapt', 'complete'];
+    steps.forEach(s => {
+      const el = document.getElementById('step-' + s);
+      if (el) el.classList.remove('active');
+    });
+
+    if (stage === 'IDLE') document.getElementById('step-idle')?.classList.add('active');
+    else if (stage === 'DATA_LOAD') document.getElementById('step-load')?.classList.add('active');
+    else if (stage === 'WARMUP_TRAINING') document.getElementById('step-warmup')?.classList.add('active');
+    else if (stage === 'STREAMING_PREQUENTIAL') document.getElementById('step-stream')?.classList.add('active');
+    else if (stage === 'DRIFT_ADAPTING') {
+      document.getElementById('step-detect')?.classList.add('active');
+      document.getElementById('step-adapt')?.classList.add('active');
+    }
+    else if (stage === 'COMPLETED') document.getElementById('step-complete')?.classList.add('active');
+  }
+
+  function fetchHardware() {
+    fetch('/api/hardware')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('hw-cpu-model').innerText = data.cpu.model;
+        document.getElementById('hw-cpu-threads').innerText = data.cpu.threads + ' Execution Threads';
+        document.getElementById('hw-ram').innerText = (data.cpu.ram_used_mb / 1024).toFixed(1) + ' / ' + (data.cpu.ram_total_mb / 1024).toFixed(1) + ' GB';
+        document.getElementById('hw-ram-util').innerText = 'Util: ' + data.cpu.ram_util_pct + '%';
+
+        document.getElementById('hw-gpu-model').innerText = data.gpu.model;
+        document.getElementById('hw-cuda-status').innerText = 'CUDA: ' + (data.gpu.cuda_available ? 'READY (DEVICE 0)' : 'UNAVAILABLE');
+        document.getElementById('hw-gpu-vram').innerText = data.gpu.vram_used_mb + ' / ' + data.gpu.vram_total_mb + ' MiB';
+        document.getElementById('hw-gpu-util').innerText = 'Core Load: ' + data.gpu.gpu_util_pct + '%';
+      })
+      .catch(() => {});
+  }
+
+  function pollStatus() {
+    fetch('/api/status')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('run-status-badge').innerText = 'STATUS: ' + data.stage;
+        document.getElementById('active-device-indicator').innerText = 'ACTIVE BINDING: ' + data.device;
+        updatePipelineStrip(data.stage);
+
+        document.getElementById('val-accuracy').innerText = data.accuracy.toFixed(2) + '%';
+        document.getElementById('val-window-acc').innerText = data.window_accuracy.toFixed(2) + '%';
+        document.getElementById('val-f1').innerText = data.f1_score.toFixed(2) + '%';
+        document.getElementById('val-samples').innerText = data.current_sample.toLocaleString() + ' / ' + data.total_samples.toLocaleString();
+        
+        const pct = data.total_samples > 0 ? ((data.current_sample / data.total_samples) * 100).toFixed(1) : '0.0';
+        document.getElementById('val-progress-pct').innerText = pct + '% Complete';
+
+        document.getElementById('val-drift-count').innerText = data.drift_count;
+        document.getElementById('val-adapt-count').innerText = data.adaptation_count;
+        document.getElementById('val-components-mod').innerText = data.components_modified + ' Components Modified';
+        document.getElementById('val-throughput').innerText = data.throughput + ' smp/s';
+        document.getElementById('val-adapt-time').innerText = 'Adapt Latency: ' + data.adaptation_time_ms.toFixed(1) + 'ms';
+
+        // Update Component Modifications Table
+        const modBody = document.getElementById('modifications-tbody');
+        if (data.component_modifications && data.component_modifications.length > 0) {
+          modBody.innerHTML = data.component_modifications.slice(-15).reverse().map(m => `
+            <tr>
+              <td>#${m.sample_index}</td>
+              <td>${m.event}</td>
+              <td>${m.components_affected} sub-components</td>
+              <td>${m.adaptation_latency_ms}ms</td>
+              <td>${m.device}</td>
+            </tr>
+          `).join('');
+        }
+
+        // Update Feature Rankings Table
+        const featBody = document.getElementById('features-tbody');
+        if (data.feature_rankings && data.feature_rankings.length > 0) {
+          featBody.innerHTML = data.feature_rankings.map(f => `
+            <tr>
+              <td>${f.rank}</td>
+              <td>${f.feature_name}</td>
+              <td>${f.feature_index}</td>
+              <td>YES (Retained)</td>
+            </tr>
+          `).join('');
+        }
+
+        // Update Console Logs
+        const consoleEl = document.getElementById('log-console');
+        if (data.logs && data.logs.length > 0) {
+          consoleEl.innerHTML = data.logs.map(l => {
+            let cls = 'log-line';
+            if (l.level === 'WARNING') cls += ' log-warn';
+            if (l.level === 'ERROR') cls += ' log-err';
+            return `<div class="${cls}">[${l.timestamp}] [${l.level}] ${l.message}</div>`;
+          }).join('');
+          consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        if (!data.running && pollingInterval) {
+          // Keep polling at slower rate when idle
+        }
+      })
+      .catch(() => {});
+  }
+
+  function startStreaming() {
+    const payload = {
+      dataset: document.getElementById('dataset-select').value,
+      model: document.getElementById('model-select').value,
+      detector: document.getElementById('detector-select').value,
+      warmup: parseInt(document.getElementById('warmup-input').value),
+      window: parseInt(document.getElementById('window-input').value)
+    };
+
+    fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'started') {
+        pollStatus();
+      }
+    })
+    .catch(err => alert('Failed to start execution: ' + err));
+  }
+
+  function stopStreaming() {
+    fetch('/api/stop', { method: 'POST' })
+      .then(res => res.json())
+      .then(() => pollStatus());
+  }
+
+  function uploadHfDataset() {
+    const hfId = document.getElementById('hf-id-input').value.trim();
+    if (!hfId) return alert('Enter a valid Hugging Face dataset identifier');
+
+    const statusEl = document.getElementById('upload-status');
+    statusEl.innerText = 'Fetching dataset from Hugging Face Hub...';
+
+    fetch('/api/upload_dataset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hf_id: hfId })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'success') {
+        statusEl.innerText = 'Success! Imported ' + data.rows + ' samples. Proceed to execution.';
+        refreshDatasets('custom');
+      } else {
+        statusEl.innerText = 'Error: ' + data.message;
+      }
+    })
+    .catch(err => { statusEl.innerText = 'Error: ' + err; });
+  }
+
+  function uploadCsvDataset() {
+    const fileInput = document.getElementById('csv-file-input');
+    if (!fileInput.files || fileInput.files.length === 0) return alert('Select a CSV file first');
+
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    const statusEl = document.getElementById('upload-status');
+    statusEl.innerText = 'Reading CSV file...';
+
+    reader.onload = function(e) {
+      const csvText = e.target.result;
+      fetch('/api/upload_dataset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv_content: csvText })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          statusEl.innerText = 'Success! Loaded ' + data.rows + ' samples with ' + data.columns.length + ' columns. Proceed to execution.';
+          refreshDatasets('custom');
+        } else {
+          statusEl.innerText = 'Error: ' + data.message;
+        }
+      })
+      .catch(err => { statusEl.innerText = 'Error: ' + err; });
+    };
+
+    reader.readAsText(file);
+  }
+
+  function refreshDatasets(selectId) {
+    fetch('/api/datasets')
+      .then(res => res.json())
+      .then(data => {
+        const select = document.getElementById('dataset-select');
+        select.innerHTML = data.datasets.map(d => `
+          <option value="${d.id}">${d.name} [${d.type}]</option>
+        `).join('');
+        if (selectId) select.value = selectId;
+      });
+  }
+
+  function clearConsole() {
+    document.getElementById('log-console').innerHTML = '';
+  }
+
+  // Polling loops
+  fetchHardware();
+  setInterval(fetchHardware, 5000);
+
+  pollStatus();
+  setInterval(pollStatus, 800);
+</script>
+
+</body>
+</html>
