@@ -98,6 +98,7 @@ export default function ControlPanel() {
   const [showAddDataset, setShowAddDataset] = useState(false);
   const [hfInput, setHfInput] = useState("");
   const [uploadStatus, setUploadStatus] = useState("");
+  const [exportNotice, setExportNotice] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logConsoleRef = useRef<HTMLDivElement>(null);
 
@@ -237,15 +238,75 @@ export default function ControlPanel() {
     reader.readAsText(file);
   };
 
-  const exportTelemetry = () => {
+  const triggerExport = async (format: "json" | "summary_csv" | "trajectory_csv" | "modifications_csv" | "logs") => {
+    try {
+      const res = await fetch(`/api/export?format=${format}`);
+      if (res.ok) {
+        const blob = await res.blob();
+        const disposition = res.headers.get("Content-Disposition");
+        let filename = `export_${format}_${Date.now()}`;
+        if (disposition && disposition.includes("filename=")) {
+          filename = disposition.split("filename=")[1].replace(/"/g, "").trim();
+        } else {
+          if (format === "json") filename += ".json";
+          else if (format.includes("csv")) filename += ".csv";
+          else if (format === "logs") filename += ".txt";
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        setExportNotice(`DOWNLOADED: ${filename}`);
+        setTimeout(() => setExportNotice(""), 4000);
+        return;
+      }
+    } catch (err) {
+      console.warn("API export failed, using client-side generator:", err);
+    }
+
+    // Client-side fallback if API is not yet reloaded or offline
     if (!telemetry) return;
-    const blob = new Blob([JSON.stringify(telemetry, null, 2)], { type: "application/json" });
+    let content = "";
+    let mimeType = "text/plain";
+    let filename = `export_${Date.now()}`;
+    const dName = telemetry.dataset_name || "stream";
+    const mName = telemetry.model_name || "model";
+
+    if (format === "json") {
+      content = JSON.stringify(telemetry, null, 2);
+      mimeType = "application/json";
+      filename = `full_telemetry_${dName}_${mName}_${Date.now()}.json`;
+    } else if (format === "summary_csv") {
+      content = `timestamp,dataset,model,detector,device,current_sample,total_samples,cumulative_accuracy_pct,window_accuracy_pct,f1_score_pct,drift_signals,adaptations_count,throughput\n${new Date().toISOString()},${dName},${mName},${telemetry.detector_name},${telemetry.device},${telemetry.current_sample},${telemetry.total_samples},${telemetry.accuracy},${telemetry.window_accuracy},${telemetry.f1_score},${telemetry.drift_count},${telemetry.adaptation_count},${telemetry.throughput}\n`;
+      mimeType = "text/csv";
+      filename = `summary_${dName}_${mName}_${Date.now()}.csv`;
+    } else if (format === "trajectory_csv") {
+      content = "sample,cumulative_accuracy_pct,window_accuracy_pct,f1_score_pct,drift_signal\n" +
+        (telemetry.trajectory || []).map(p => `${p.sample},${p.cumulative_acc},${p.window_acc},${p.f1},${p.drift}`).join("\n");
+      mimeType = "text/csv";
+      filename = `trajectory_${dName}_${mName}_${Date.now()}.csv`;
+    } else if (format === "modifications_csv") {
+      content = "sample_index,event,components_affected,adaptation_latency_ms,device\n" +
+        (telemetry.component_modifications || []).map(m => `${m.sample_index},"${m.event}",${m.components_affected},${m.adaptation_latency_ms},"${m.device}"`).join("\n");
+      mimeType = "text/csv";
+      filename = `audit_${dName}_${mName}_${Date.now()}.csv`;
+    } else if (format === "logs") {
+      content = (telemetry.logs || []).map(l => `[${l.timestamp}] [${l.level}] ${l.message}`).join("\n");
+      mimeType = "text/plain";
+      filename = `logs_${dName}_${mName}_${Date.now()}.txt`;
+    }
+
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `stream_telemetry_${Date.now()}.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+    setExportNotice(`DOWNLOADED: ${filename}`);
+    setTimeout(() => setExportNotice(""), 4000);
   };
 
   // Trajectory SVG calculations
@@ -489,10 +550,17 @@ export default function ControlPanel() {
               </button>
               <button
                 type="button"
-                className="w-32 border border-black p-2 font-bold uppercase hover:bg-black hover:text-white"
+                className="w-28 border border-black p-2 font-bold uppercase hover:bg-black hover:text-white"
                 onClick={handleStop}
               >
                 HALT STREAM
+              </button>
+              <button
+                type="button"
+                className="w-28 border border-black p-2 font-bold uppercase hover:bg-black hover:text-white"
+                onClick={() => triggerExport("json")}
+              >
+                EXPORT (JSON)
               </button>
             </div>
           </div>
@@ -503,7 +571,16 @@ export default function ControlPanel() {
           <div>
             <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
               <span>STREAMING PERFORMANCE & ADAPTATION METRICS</span>
-              <span className="font-bold">STATUS: {telemetry?.stage || "IDLE"}</span>
+              <div className="flex gap-2 items-center">
+                <button
+                  type="button"
+                  onClick={() => triggerExport("summary_csv")}
+                  className="border border-black px-1.5 py-0.5 text-[10px] uppercase font-bold hover:bg-black hover:text-white"
+                >
+                  EXPORT METRICS (CSV)
+                </button>
+                <span className="font-bold">STATUS: {telemetry?.stage || "IDLE"}</span>
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-2 mb-2">
               <div className="border border-black p-2">
@@ -571,18 +648,81 @@ export default function ControlPanel() {
         </div>
       </div>
 
+      {/* Output & Telemetry Export Center */}
+      <div className="border border-black p-2.5 bg-white">
+        <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
+          <span>OUTPUT & TELEMETRY EXPORT CENTER</span>
+          {exportNotice ? (
+            <span className="bg-black text-white px-2 py-0.5 text-[10px] font-bold tracking-wider">
+              {exportNotice}
+            </span>
+          ) : (
+            <span className="text-[10px] text-neutral-500">FORMATS: CSV / JSON / TXT</span>
+          )}
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          <button
+            type="button"
+            onClick={() => triggerExport("summary_csv")}
+            className="border border-black p-2 text-center hover:bg-black hover:text-white uppercase font-bold text-[11px] flex flex-col items-center justify-center gap-0.5"
+          >
+            <span>EXPORT SUMMARY (CSV)</span>
+            <span className="text-[9px] font-normal text-neutral-500 hover:text-neutral-300">Accuracy, F1, Latency & Stats</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => triggerExport("trajectory_csv")}
+            className="border border-black p-2 text-center hover:bg-black hover:text-white uppercase font-bold text-[11px] flex flex-col items-center justify-center gap-0.5"
+          >
+            <span>EXPORT TRAJECTORY (CSV)</span>
+            <span className="text-[9px] font-normal text-neutral-500 hover:text-neutral-300">Sample-by-Sample Time Series</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => triggerExport("modifications_csv")}
+            className="border border-black p-2 text-center hover:bg-black hover:text-white uppercase font-bold text-[11px] flex flex-col items-center justify-center gap-0.5"
+          >
+            <span>EXPORT AUDIT LOG (CSV)</span>
+            <span className="text-[9px] font-normal text-neutral-500 hover:text-neutral-300">Component Adaptation Events</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => triggerExport("logs")}
+            className="border border-black p-2 text-center hover:bg-black hover:text-white uppercase font-bold text-[11px] flex flex-col items-center justify-center gap-0.5"
+          >
+            <span>EXPORT LOGS (TXT)</span>
+            <span className="text-[9px] font-normal text-neutral-500 hover:text-neutral-300">Raw Console Execution Trace</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => triggerExport("json")}
+            className="border border-black p-2 text-center hover:bg-black hover:text-white uppercase font-bold text-[11px] flex flex-col items-center justify-center gap-0.5"
+          >
+            <span>EXPORT FULL RUN (JSON)</span>
+            <span className="text-[9px] font-normal text-neutral-500 hover:text-neutral-300">Complete Telemetry & Hardware</span>
+          </button>
+        </div>
+      </div>
+
       {/* Live Pure SVG Stream Trajectory Chart */}
       <div className="border border-black p-2.5 bg-white">
         <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
           <span>LIVE STREAM ACCURACY & DRIFT TRAJECTORY (SVG)</span>
-          <div className="flex gap-3 items-center">
+          <div className="flex gap-2 items-center">
             <span className="text-[10px]">— SOLID: CUMULATIVE | ··· DOTTED: WINDOWED | ╎ DASH: DRIFT SIGNAL</span>
             <button
               type="button"
               className="border border-black px-2 py-0.5 uppercase text-[10px] font-bold hover:bg-black hover:text-white"
-              onClick={exportTelemetry}
+              onClick={() => triggerExport("trajectory_csv")}
             >
-              EXPORT TELEMETRY (JSON)
+              EXPORT TRAJECTORY (CSV)
+            </button>
+            <button
+              type="button"
+              className="border border-black px-2 py-0.5 uppercase text-[10px] font-bold hover:bg-black hover:text-white"
+              onClick={() => triggerExport("json")}
+            >
+              EXPORT (JSON)
             </button>
           </div>
         </div>
@@ -633,8 +773,15 @@ export default function ControlPanel() {
       <div className="grid grid-cols-2 gap-3">
         {/* Component Modifications Table */}
         <div className="border border-black p-2.5 bg-white">
-          <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 text-[11px]">
-            MODEL COMPONENT MODIFICATIONS & REPLACEMENTS LOG
+          <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
+            <span>MODEL COMPONENT MODIFICATIONS & REPLACEMENTS LOG</span>
+            <button
+              type="button"
+              className="border border-black px-1.5 py-0.5 text-[10px] uppercase font-bold hover:bg-black hover:text-white"
+              onClick={() => triggerExport("modifications_csv")}
+            >
+              EXPORT AUDIT (CSV)
+            </button>
           </div>
           <div className="max-h-44 overflow-y-auto border border-black">
             <table className="w-full text-left border-collapse text-[11px]">
@@ -715,7 +862,16 @@ export default function ControlPanel() {
       <div className="border border-black p-2.5 bg-white">
         <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
           <span>REAL-TIME PROCESS EXECUTION CONSOLE</span>
-          <span className="text-[10px] text-neutral-500">LOGSTREAM</span>
+          <div className="flex gap-2 items-center">
+            <button
+              type="button"
+              className="border border-black px-1.5 py-0.5 text-[10px] uppercase font-bold hover:bg-black hover:text-white"
+              onClick={() => triggerExport("logs")}
+            >
+              EXPORT LOGS (TXT)
+            </button>
+            <span className="text-[10px] text-neutral-500">LOGSTREAM</span>
+          </div>
         </div>
         <div
           ref={logConsoleRef}

@@ -20,6 +20,8 @@ import time
 import shutil
 import threading
 import subprocess
+import csv
+import io
 from urllib.parse import urlparse, parse_qs
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Any, Optional, List, Tuple
@@ -85,10 +87,10 @@ class TelemetryEngine:
         }
         with self.lock:
             self.logs.append(entry)
-            if len(self.logs) > 500:
+            if len(self.logs) > 10000:
                 self.logs.pop(0)
 
-    def get_snapshot(self) -> Dict[str, Any]:
+    def get_snapshot(self, full: bool = False) -> Dict[str, Any]:
         with self.lock:
             return {
                 "running": self.running,
@@ -107,10 +109,10 @@ class TelemetryEngine:
                 "components_modified": self.components_modified,
                 "adaptation_time_ms": round(self.adaptation_time_ms, 2),
                 "throughput": round(self.throughput, 1),
-                "logs": list(self.logs[-100:]),
-                "trajectory": list(self.trajectory[-60:]),
+                "logs": list(self.logs) if full else list(self.logs[-100:]),
+                "trajectory": list(self.trajectory) if full else list(self.trajectory[-60:]),
                 "feature_rankings": list(self.feature_rankings),
-                "component_modifications": list(self.component_modifications[-30:]),
+                "component_modifications": list(self.component_modifications) if full else list(self.component_modifications[-30:]),
             }
 
 
@@ -442,6 +444,15 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_file(self, body: bytes, content_type: str, filename: str, status: int = 200):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -468,7 +479,99 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/hardware":
             self._send_json(get_hardware_info())
         elif path == "/api/status":
-            self._send_json(TELEMETRY.get_snapshot())
+            query_params = parse_qs(parsed.query)
+            full = query_params.get("full", ["false"])[0].lower() in ("true", "1")
+            self._send_json(TELEMETRY.get_snapshot(full=full))
+        elif path == "/api/export":
+            query_params = parse_qs(parsed.query)
+            fmt = query_params.get("format", ["json"])[0].lower()
+            snap = TELEMETRY.get_snapshot(full=True)
+            hw = get_hardware_info()
+            d_name = snap["dataset_name"] or "stream"
+            m_name = snap["model_name"] or "model"
+            ts = int(time.time())
+
+            if fmt == "json":
+                export_data = {
+                    "metadata": {
+                        "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "timestamp": ts,
+                        "hardware": hw,
+                    },
+                    "telemetry": snap,
+                }
+                body = json.dumps(export_data, indent=2).encode("utf-8")
+                filename = f"export_{d_name}_{m_name}_{ts}.json"
+                self._send_file(body, "application/json", filename)
+            elif fmt in ("csv", "summary_csv", "summary"):
+                out = io.StringIO()
+                writer = csv.writer(out)
+                writer.writerow([
+                    "timestamp", "dataset", "model", "detector", "device", "stage",
+                    "current_sample", "total_samples", "cumulative_accuracy_pct",
+                    "window_accuracy_pct", "f1_score_pct", "drift_signals",
+                    "adaptations_count", "components_modified", "adaptation_time_ms", "throughput_smp_s"
+                ])
+                writer.writerow([
+                    time.strftime("%Y-%m-%d %H:%M:%S"),
+                    snap["dataset_name"],
+                    snap["model_name"],
+                    snap["detector_name"],
+                    snap["device"],
+                    snap["stage"],
+                    snap["current_sample"],
+                    snap["total_samples"],
+                    snap["accuracy"],
+                    snap["window_accuracy"],
+                    snap["f1_score"],
+                    snap["drift_count"],
+                    snap["adaptation_count"],
+                    snap["components_modified"],
+                    snap["adaptation_time_ms"],
+                    snap["throughput"]
+                ])
+                body = out.getvalue().encode("utf-8")
+                filename = f"summary_{d_name}_{m_name}_{ts}.csv"
+                self._send_file(body, "text/csv", filename)
+            elif fmt in ("trajectory_csv", "trajectory"):
+                out = io.StringIO()
+                writer = csv.writer(out)
+                writer.writerow(["sample", "cumulative_accuracy_pct", "window_accuracy_pct", "f1_score_pct", "drift_signal"])
+                for pt in snap["trajectory"]:
+                    writer.writerow([
+                        pt.get("sample", 0),
+                        pt.get("cumulative_acc", 0.0),
+                        pt.get("window_acc", 0.0),
+                        pt.get("f1", 0.0),
+                        pt.get("drift", 0)
+                    ])
+                body = out.getvalue().encode("utf-8")
+                filename = f"trajectory_{d_name}_{m_name}_{ts}.csv"
+                self._send_file(body, "text/csv", filename)
+            elif fmt in ("modifications_csv", "audit", "modifications"):
+                out = io.StringIO()
+                writer = csv.writer(out)
+                writer.writerow(["sample_index", "event", "components_affected", "adaptation_latency_ms", "device"])
+                for m in snap["component_modifications"]:
+                    writer.writerow([
+                        m.get("sample_index", 0),
+                        m.get("event", ""),
+                        m.get("components_affected", 0),
+                        m.get("adaptation_latency_ms", 0.0),
+                        m.get("device", "")
+                    ])
+                body = out.getvalue().encode("utf-8")
+                filename = f"audit_{d_name}_{m_name}_{ts}.csv"
+                self._send_file(body, "text/csv", filename)
+            elif fmt in ("logs", "txt", "log"):
+                lines = []
+                for l in snap["logs"]:
+                    lines.append(f"[{l.get('timestamp','')}] [{l.get('level','')}] {l.get('message','')}")
+                body = "\n".join(lines).encode("utf-8")
+                filename = f"logs_{d_name}_{m_name}_{ts}.txt"
+                self._send_file(body, "text/plain; charset=utf-8", filename)
+            else:
+                self.send_error(400, f"Unsupported export format: {fmt}")
         elif path == "/api/datasets":
             datasets_list = [
                 {"id": "sea", "name": "SEA Concepts Benchmark (10k)", "features": 3, "type": "Synthetic Abrupt"},

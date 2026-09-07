@@ -16,3 +16,4 @@ models/*.onnx
 test_portrait.jpg
 sample_face.jpg
 .atreus.pids
+data/custom_stream.csv
