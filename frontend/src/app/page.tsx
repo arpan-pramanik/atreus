@@ -359,6 +359,17 @@ export default function ControlPanel() {
 
   return (
     <div className="max-w-[1500px] mx-auto flex flex-col gap-3 text-[12px] bg-white text-black p-3">
+      {/* Enterprise Security Platform Overview */}
+      <div className="border border-black p-2.5 bg-white">
+        <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-1.5 flex justify-between items-center text-[11px]">
+          <span>ENTERPRISE ADAPTIVE SECURITY PLATFORM | HIGH-THROUGHPUT THREAT INTELLIGENCE</span>
+          <span className="font-bold">MANTIS ARCHITECTURE SPECIFICATION</span>
+        </div>
+        <p className="text-[11px] leading-relaxed text-neutral-800">
+          Enterprise streaming threat engine architected for zero-latency inline protection and asynchronous behavioral anomaly detection. Decouples deterministic gateway traffic inspection from real-time ML prequential analysis, combining dynamic feature relevance tracking, online ensemble adaptation, and autonomous concept drift detectors (ADWIN / DDM / EDDM / Page-Hinkley) to neutralize polymorphic attacks and distribution shifts without system downtime.
+        </p>
+      </div>
+
       {/* Top Hardware Telemetry */}
       <div className="border border-black p-2.5 bg-white">
         <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
@@ -712,7 +723,7 @@ export default function ControlPanel() {
         <div className="font-bold uppercase tracking-wide border-b border-black pb-1 mb-2 flex justify-between items-center text-[11px]">
           <span>LIVE STREAM ACCURACY & DRIFT TRAJECTORY (SVG)</span>
           <div className="flex gap-2 items-center">
-            <span className="text-[10px]">— SOLID: CUMULATIVE | ··· DOTTED: WINDOWED | ╎ DASH: DRIFT SIGNAL</span>
+            <span className="text-[10px]">— SOLID: CUMULATIVE | -- DASH: WINDOWED | | BAR: DRIFT SIGNAL</span>
             <button
               type="button"
               className="border border-black px-2 py-0.5 uppercase text-[10px] font-bold hover:bg-black hover:text-white"
