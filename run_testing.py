@@ -1,13 +1,10 @@
 """Full-Scale Rigorous Testing Script on Actual Real-World Streaming Datasets."""
 
 import os
-import sys
 import pandas as pd
 from src.datasets.loader import (
     load_electricity_stream,
     load_covertype_stream,
-    load_phishing_stream,
-    load_airlines_stream,
 )
 from src.detectors.adwin import ADWINDetector
 from src.detectors.ddm import DDMDetector

@@ -5,9 +5,8 @@ from src.detectors.base import BaseDriftDetector
 
 try:
     from river.drift.binary import DDM as RiverDDM
-    HAS_RIVER = True
-except ImportError:
-    HAS_RIVER = False
+except ImportError as e:
+    raise ImportError("river is required for DDM drift detection. Install it via 'pip install river'.") from e
 
 
 class DDMDetector(BaseDriftDetector):
@@ -26,24 +25,19 @@ class DDMDetector(BaseDriftDetector):
         self.warm_start = warm_start
         self.warning_threshold = warning_threshold
         self.drift_threshold = drift_threshold
-        self._detector = (
-            RiverDDM(
-                warm_start=warm_start,
-                warning_threshold=warning_threshold,
-                drift_threshold=drift_threshold,
-            )
-            if HAS_RIVER
-            else None
+        self._detector = RiverDDM(
+            warm_start=warm_start,
+            warning_threshold=warning_threshold,
+            drift_threshold=drift_threshold,
         )
 
     def reset(self) -> None:
         """Reset internal statistics."""
-        if HAS_RIVER:
-            self._detector = RiverDDM(
-                warm_start=self.warm_start,
-                warning_threshold=self.warning_threshold,
-                drift_threshold=self.drift_threshold,
-            )
+        self._detector = RiverDDM(
+            warm_start=self.warm_start,
+            warning_threshold=self.warning_threshold,
+            drift_threshold=self.drift_threshold,
+        )
         self.drift_detected = False
         self.warning_detected = False
 
@@ -61,12 +55,11 @@ class DDMDetector(BaseDriftDetector):
         self.drift_detected = False
         self.warning_detected = False
 
-        if self._detector is not None:
-            self._detector.update(val)
-            if self._detector.drift_detected:
-                self.drift_detected = True
-                self.drifts_detected_count += 1
-            if getattr(self._detector, "warning_detected", False):
-                self.warning_detected = True
+        self._detector.update(val)
+        if self._detector.drift_detected:
+            self.drift_detected = True
+            self.drifts_detected_count += 1
+        if getattr(self._detector, "warning_detected", False):
+            self.warning_detected = True
 
         return self.drift_detected, self.warning_detected

@@ -15,7 +15,6 @@ __all__ = [
     "SelectiveAdaptiveEnsemble",
     "GPUAcceleratedAdaptiveXGBoost",
     "BoostedAdaptiveForest",
-    "ResearchBoostedEnsemble",
     "SelfHealingMetaEnsemble",
     "SelfHealingConceptDriftFramework",
     "AdaptiveOnlineSVM",

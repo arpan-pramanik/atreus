@@ -19,15 +19,12 @@ Updated Self-Healing Model
 """
 
 import time
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional
 import numpy as np
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import SGDClassifier
 from src.detectors.base import BaseDriftDetector
 from src.detectors.adwin import ADWINDetector
-from src.detectors.ddm import DDMDetector
-from src.detectors.eddm import EDDMDetector
-from src.detectors.page_hinkley import PageHinkleyDetector
 
 
 class OnlineStandardScaler:
@@ -103,6 +100,7 @@ class SelfHealingConceptDriftFramework:
         # Metrics & Logging
         self.adaptation_count: int = 0
         self.components_updated: int = 0
+        self.last_components_updated: int = 0
         self.total_adaptation_time: float = 0.0
         self.drift_events: List[int] = []
 
@@ -209,43 +207,63 @@ class SelfHealingConceptDriftFramework:
         """
         Feature Selection & Selective Component Adaptation:
         Updates only the affected components rather than retraining the full model from scratch.
+        If the feature subset changes, retrains all trees to prevent feature misalignment.
+        Uses held-out buffer samples for weight recalculation to prevent in-sample inflation.
         """
         t0 = time.perf_counter()
         
         # Step A: Update online feature selection on transition buffer
         X_scaled = np.array([self.scaler.transform(xi) for xi in X_buffer])
-        self.selected_feature_indices = self._select_important_features(X_scaled, y_buffer)
+        new_feature_indices = self._select_important_features(X_scaled, y_buffer)
+        subset_changed = (
+            self.selected_feature_indices is None
+            or not np.array_equal(new_feature_indices, self.selected_feature_indices)
+        )
+        self.selected_feature_indices = new_feature_indices
         X_sub = X_scaled[:, self.selected_feature_indices]
 
-        # Step B: Evaluate RF component errors on recent window
-        k_replace = max(1, int(np.ceil(self.n_trees * self.replacement_ratio)))
-        comp_errors = np.zeros(self.n_trees)
-        for i, tree in enumerate(self.trees):
-            try:
-                preds = tree.predict(X_sub)
-                comp_errors[i] = np.mean(preds != y_buffer)
-            except Exception:
-                comp_errors[i] = 1.0
-
-        # Step C: Selectively replace worst affected trees
-        worst_idx = np.argsort(comp_errors)[-k_replace:]
+        # Hold out 30% of the buffer to evaluate component errors without in-sample inflation
         n_samples = len(X_buffer)
-        for idx in worst_idx:
-            boot_idx = self.rng.choice(n_samples, size=n_samples, replace=True)
+        val_size = max(10, int(0.3 * n_samples))
+        train_idx = np.arange(n_samples - val_size)
+        val_idx = np.arange(n_samples - val_size, n_samples)
+        X_train, y_train = X_sub[train_idx], y_buffer[train_idx]
+        X_val, y_val = X_sub[val_idx], y_buffer[val_idx]
+
+        k_replace = max(1, int(np.ceil(self.n_trees * self.replacement_ratio)))
+
+        if subset_changed:
+            # Re-align all trees when selected feature set changes
+            retrain_indices = list(range(self.n_trees))
+        else:
+            # Step B: Evaluate RF component errors on held-out validation window
+            comp_errors = np.zeros(self.n_trees)
+            for i, tree in enumerate(self.trees):
+                try:
+                    preds = tree.predict(X_val)
+                    comp_errors[i] = np.mean(preds != y_val)
+                except Exception:
+                    comp_errors[i] = 1.0
+            retrain_indices = list(np.argsort(comp_errors)[-k_replace:])
+
+        # Step C: Selectively replace affected trees
+        n_tr = len(X_train)
+        for idx in retrain_indices:
+            boot_idx = self.rng.choice(n_tr, size=n_tr, replace=True)
             new_tree = DecisionTreeClassifier(
                 max_depth=12,
                 max_features="sqrt",
                 random_state=self.rng.randint(0, 100000),
             )
-            new_tree.fit(X_sub[boot_idx], y_buffer[boot_idx])
+            new_tree.fit(X_train[boot_idx], y_train[boot_idx])
             self.trees[idx] = new_tree
 
-        # Step D: Recalculate component weights via softmax accuracy
+        # Step D: Recalculate component weights via softmax accuracy on held-out validation buffer
         updated_errors = np.zeros(self.n_trees)
         for i, tree in enumerate(self.trees):
             try:
-                preds = tree.predict(X_sub)
-                updated_errors[i] = np.mean(preds != y_buffer)
+                preds = tree.predict(X_val)
+                updated_errors[i] = np.mean(preds != y_val)
             except Exception:
                 updated_errors[i] = 1.0
 
@@ -260,8 +278,10 @@ class SelfHealingConceptDriftFramework:
             except Exception:
                 pass
 
+        num_modified = len(retrain_indices)
         self.adaptation_count += 1
-        self.components_updated += k_replace
+        self.components_updated += num_modified
+        self.last_components_updated = num_modified
         t1 = time.perf_counter()
         self.total_adaptation_time += (t1 - t0)
 

@@ -110,7 +110,9 @@ export default function ControlPanel() {
         const data = await res.json();
         setHardware(data);
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Hardware polling failed:", err);
+    }
   };
 
   // Poll telemetry
@@ -121,7 +123,9 @@ export default function ControlPanel() {
         const data: TelemetrySnapshot = await res.json();
         setTelemetry(data);
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Telemetry status polling failed:", err);
+    }
   };
 
   // Fetch datasets list
@@ -132,7 +136,9 @@ export default function ControlPanel() {
         const data = await res.json();
         if (data.datasets) setDatasets(data.datasets);
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Datasets list fetch failed:", err);
+    }
   };
 
   useEffect(() => {
@@ -184,7 +190,9 @@ export default function ControlPanel() {
     try {
       await fetch("/api/stop", { method: "POST" });
       fetchTelemetry();
-    } catch {}
+    } catch (err) {
+      console.warn("Stop command failed:", err);
+    }
   };
 
   const handleUploadHf = async () => {

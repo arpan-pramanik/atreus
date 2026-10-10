@@ -9,7 +9,6 @@ from src.datasets.hf_loader import (
 )
 from src.detectors.adwin import ADWINDetector
 from src.detectors.ddm import DDMDetector
-from src.detectors.page_hinkley import PageHinkleyDetector
 from src.models.static_model import StaticStreamingModel
 from src.models.full_retrain import FullRetrainingModel
 from src.models.selective_adaptive import SelectiveAdaptiveEnsemble

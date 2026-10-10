@@ -29,14 +29,11 @@ from src.datasets.synthetic import (
 )
 from src.datasets.loader import (
     load_electricity_stream,
-    load_covertype_stream,
     load_airlines_stream,
     load_phishing_stream,
 )
 from src.datasets.hf_loader import (
     load_hf_adult_income_stream,
-    load_hf_bank_marketing_stream,
-    load_hf_credit_default_stream,
 )
 
 # Evaluation & Visualizer

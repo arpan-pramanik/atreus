@@ -1,10 +1,8 @@
 """Hugging Face Datasets Loader for Streaming & Concept Drift Evaluation."""
 
-import os
 from typing import Tuple, Optional
 import numpy as np
 import pandas as pd
-from datasets import load_dataset
 
 
 def load_hf_adult_income_stream(
@@ -14,6 +12,7 @@ def load_hf_adult_income_stream(
     Load Adult Census Income dataset directly from Hugging Face Hub (`scikit-learn/adult-census-income`).
     32,561 instances predicting income >50K (1) vs <=50K (0).
     """
+    from datasets import load_dataset
     ds = load_dataset("scikit-learn/adult-census-income", split="train")
     df = ds.to_pandas()
 
@@ -44,6 +43,7 @@ def load_hf_bank_marketing_stream(
     Load Bank Marketing dataset from Hugging Face (`inria-soda/tabular-benchmark`, config `clf_num_bank-marketing`).
     10,578 instances.
     """
+    from datasets import load_dataset
     ds = load_dataset("inria-soda/tabular-benchmark", "clf_num_bank-marketing", split="train")
     df = ds.to_pandas()
 
@@ -75,6 +75,7 @@ def load_hf_credit_default_stream(
     Load Credit Card Default dataset from Hugging Face (`inria-soda/tabular-benchmark`, config `clf_cat_default-of-credit-card-clients`).
     13,272 instances.
     """
+    from datasets import load_dataset
     ds = load_dataset("inria-soda/tabular-benchmark", "clf_cat_default-of-credit-card-clients", split="train")
     df = ds.to_pandas()
 

@@ -13,10 +13,9 @@ Key Algorithmic Pillars:
 """
 
 import time
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple
 import numpy as np
 from sklearn.tree import DecisionTreeClassifier
-from src.detectors.base import BaseDriftDetector
 from src.detectors.adwin import ADWINDetector
 from src.detectors.ddm import DDMDetector
 

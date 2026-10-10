@@ -16,7 +16,11 @@ const FRONTEND_PORT = 3000;
 
 function cleanupPort(port) {
   try {
-    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`);
+    if (process.platform === "win32") {
+      execSync(`for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port}') do taskkill /f /pid %a >nul 2>&1 || exit 0`, { stdio: "ignore" });
+    } else {
+      execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: "ignore" });
+    }
   } catch {}
 }
 
@@ -86,9 +90,14 @@ checkBackendReady()
     console.log(`[Backend] Verified ready at http://localhost:${BACKEND_PORT}`);
     console.log(`[2/2] Starting Next.js Frontend on port ${FRONTEND_PORT}...\n`);
 
-    // Determine package manager (bun or npm)
-    const hasBun = fs.existsSync("/home/arpan/.npm-global/bin/bun");
-    const frontendCmd = hasBun ? "/home/arpan/.npm-global/bin/bun" : "npm";
+    // Determine package manager dynamically
+    let hasBun = false;
+    try {
+      execSync(process.platform === "win32" ? "where bun" : "which bun", { stdio: "ignore" });
+      hasBun = true;
+    } catch {}
+
+    const frontendCmd = hasBun ? "bun" : (process.platform === "win32" ? "npm.cmd" : "npm");
     const frontendArgs = hasBun
       ? ["run", "--cwd", "frontend", "dev"]
       : ["--prefix", "frontend", "run", "dev"];

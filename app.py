@@ -17,11 +17,11 @@ if BASE_DIR not in sys.path:
 
 import json
 import time
-import shutil
 import threading
 import subprocess
 import csv
 import io
+import re
 from urllib.parse import urlparse, parse_qs
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Any, Optional, List, Tuple
@@ -29,8 +29,8 @@ import numpy as np
 import pandas as pd
 
 # Project modules
-from src.datasets.synthetic import generate_sea_stream, generate_agrawal_stream, generate_rotating_hyperplane_stream
-from src.datasets.loader import load_electricity_stream, load_covertype_stream, load_airlines_stream, load_phishing_stream
+from src.datasets.synthetic import generate_sea_stream, generate_agrawal_stream
+from src.datasets.loader import load_electricity_stream, load_covertype_stream, load_airlines_stream
 from src.datasets.hf_loader import load_hf_adult_income_stream, load_hf_bank_marketing_stream, load_hf_credit_default_stream
 from src.detectors.adwin import ADWINDetector
 from src.detectors.ddm import DDMDetector
@@ -44,6 +44,19 @@ from src.models.boosted_adaptive_forest import BoostedAdaptiveForest
 from src.models.self_healing_meta_ensemble import SelfHealingMetaEnsemble
 from src.models.xgboost_adaptive import GPUAcceleratedAdaptiveXGBoost
 from src.models.adaptive_svm import AdaptiveOnlineSVM
+
+MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
+RUN_LOCK = threading.Lock()
+
+VALID_DATASETS = {
+    "sea", "agrawal", "electricity", "covertype", "airlines",
+    "hf_adult", "hf_bank", "hf_credit", "custom",
+}
+
+VALID_MODELS = {
+    "proposed", "boosted_forest", "dual_memory", "xgboost_cuda",
+    "full_retrain", "adaptive_svm", "selective", "static",
+}
 
 
 class TelemetryEngine:
@@ -126,14 +139,14 @@ LAST_HW_CHECK = 0.0
 
 
 def get_hardware_info() -> Dict[str, Any]:
-    """Query CPU, RAM, and NVIDIA RTX 5070 GPU stats with caching."""
+    """Query genuine CPU, RAM, and NVIDIA GPU stats with caching, reporting 'Unavailable' on missing metrics."""
     global CACHED_HARDWARE, LAST_HW_CHECK
     now = time.time()
     if CACHED_HARDWARE is not None and (now - LAST_HW_CHECK) < 4.0:
         return CACHED_HARDWARE
 
-    cpu_count = os.cpu_count() or 32
-    cpu_model = "AMD Ryzen 9 9955HX"
+    cpu_count = os.cpu_count() or 1
+    cpu_model = "Generic CPU"
     try:
         with open("/proc/cpuinfo", "r") as f:
             for line in f:
@@ -141,10 +154,11 @@ def get_hardware_info() -> Dict[str, Any]:
                     cpu_model = line.split(":", 1)[1].strip()
                     break
     except Exception:
-        pass
+        import platform
+        cpu_model = platform.processor() or "CPU"
 
-    mem_total_mb = 31343
-    mem_avail_mb = 28000
+    mem_total_mb = 0
+    mem_avail_mb = 0
     try:
         with open("/proc/meminfo", "r") as f:
             for line in f:
@@ -155,13 +169,13 @@ def get_hardware_info() -> Dict[str, Any]:
     except Exception:
         pass
 
-    mem_used_mb = max(0, mem_total_mb - mem_avail_mb)
+    mem_used_mb = max(0, mem_total_mb - mem_avail_mb) if mem_total_mb > 0 else 0
 
-    gpu_name = "NVIDIA GeForce RTX 5070 Laptop GPU"
-    gpu_total_mb = 8151
-    gpu_used_mb = 2
+    gpu_name = "Unavailable"
+    gpu_total_mb = 0
+    gpu_used_mb = 0
     gpu_util = 0
-    cuda_available = True
+    cuda_available = False
 
     try:
         res = subprocess.run(
@@ -188,16 +202,16 @@ def get_hardware_info() -> Dict[str, Any]:
             "threads": cpu_count,
             "ram_total_mb": mem_total_mb,
             "ram_used_mb": mem_used_mb,
-            "ram_util_pct": round((mem_used_mb / max(1, mem_total_mb)) * 100, 1),
+            "ram_util_pct": round((mem_used_mb / max(1, mem_total_mb)) * 100, 1) if mem_total_mb > 0 else 0.0,
         },
         "gpu": {
             "model": gpu_name,
             "cuda_available": cuda_available,
             "vram_total_mb": gpu_total_mb,
             "vram_used_mb": gpu_used_mb,
-            "vram_util_pct": round((gpu_used_mb / max(1, gpu_total_mb)) * 100, 1),
+            "vram_util_pct": round((gpu_used_mb / max(1, gpu_total_mb)) * 100, 1) if gpu_total_mb > 0 else 0.0,
             "gpu_util_pct": gpu_util,
-            "device_ordinal": 0,
+            "device_ordinal": 0 if cuda_available else None,
         },
     }
     LAST_HW_CHECK = now
@@ -218,7 +232,7 @@ def load_dataset_by_key(key: str) -> Tuple[np.ndarray, np.ndarray, str]:
     elif key == "covertype":
         return load_covertype_stream(max_samples=10000)
     elif key == "airlines":
-        return load_airlines_stream(max_samples=5000)
+        return load_airlines_stream(max_samples=2000)
     elif key == "hf_adult":
         return load_hf_adult_income_stream(max_samples=10000)
     elif key == "hf_bank":
@@ -234,49 +248,60 @@ def load_dataset_by_key(key: str) -> Tuple[np.ndarray, np.ndarray, str]:
         feature_cols = [c for c in df.columns if c != target_col]
         X_df = df[feature_cols].copy()
         for c in X_df.columns:
-            if X_df[c].dtype == object:
+            if X_df[c].dtype == object or str(X_df[c].dtype).startswith("category"):
                 X_df[c] = pd.factorize(X_df[c])[0]
             X_df[c] = pd.to_numeric(X_df[c], errors="coerce").fillna(0.0)
         X = X_df.values.astype(np.float32)
-        y_raw = pd.to_numeric(df[target_col], errors="coerce").fillna(0).values
-        y = (y_raw > np.median(y_raw)).astype(int) if len(np.unique(y_raw)) > 2 else (y_raw == y_raw.max()).astype(int)
+        
+        y_raw = df[target_col].values
+        if df[target_col].dtype == object or str(df[target_col].dtype).startswith("category"):
+            y = pd.factorize(y_raw)[0].astype(int)
+        else:
+            y_num = pd.to_numeric(df[target_col], errors="coerce").fillna(0).values
+            y = (y_num > np.median(y_num)).astype(int) if len(np.unique(y_num)) > 2 else (y_num == y_num.max()).astype(int)
         return X, y, "Custom Added Dataset"
     else:
-        # Default SEA
-        X, y, _ = generate_sea_stream(n_samples=5000, seed=42)
-        return X, y, "SEA Concepts Benchmark"
+        raise ValueError(f"Unknown dataset key: {key}")
 
 
 def build_detector(name: str):
     name = name.lower()
-    if "ddm" in name:
-        return DDMDetector(warm_start=30)
-    elif "eddm" in name:
+    if "eddm" in name:
         return EDDMDetector(warm_start=30)
+    elif "ddm" in name:
+        return DDMDetector(warm_start=30)
     elif "page" in name:
         return PageHinkleyDetector(threshold=25.0)
     return ADWINDetector(delta=0.005)
 
 
 def build_model(model_key: str, detector_name: str):
+    if model_key not in VALID_MODELS:
+        raise ValueError(f"Unknown model key: {model_key}")
+
     det = build_detector(detector_name)
     if model_key == "proposed":
         return SelfHealingConceptDriftFramework(n_trees=25, drift_detector=det, name="Proposed Selective Adapt")
     elif model_key == "boosted_forest":
-        d_type = "ddm" if "ddm" in detector_name.lower() else "adwin"
+        d_type = "eddm" if "eddm" in detector_name.lower() else ("ddm" if "ddm" in detector_name.lower() else "adwin")
         return BoostedAdaptiveForest(n_estimators=25, detector_type=d_type, name="Boosted ARF-DWM Forest")
     elif model_key == "dual_memory":
         return SelfHealingMetaEnsemble(n_tree_components=20, name="Self-Healing Dual-Memory Meta-Ensemble")
     elif model_key == "xgboost_cuda":
-        return GPUAcceleratedAdaptiveXGBoost(n_estimators=30, drift_detector=det, device="cuda", n_jobs=32, name="Adaptive XGBoost (RTX 5070 CUDA)")
+        hw = get_hardware_info()
+        dev = "cuda" if hw["gpu"]["cuda_available"] else "cpu"
+        threads = hw["cpu"]["threads"]
+        return GPUAcceleratedAdaptiveXGBoost(n_estimators=30, drift_detector=det, device=dev, n_jobs=threads, name=f"Adaptive XGBoost ({dev.upper()})")
     elif model_key == "full_retrain":
         return FullRetrainingModel(drift_detector=det, name="Full Retraining")
     elif model_key == "adaptive_svm":
         return AdaptiveOnlineSVM(drift_detector=det, name="Adaptive Online SVM (Incremental Margin)")
     elif model_key == "selective":
         return SelectiveAdaptiveEnsemble(n_estimators=25, replacement_ratio=0.3, drift_detector=det, name="Selective Adaptive Ensemble")
-    else:
+    elif model_key == "static":
         return StaticStreamingModel(name="Static Baseline")
+    else:
+        raise ValueError(f"Unknown model key: {model_key}")
 
 
 def run_streaming_pipeline(dataset_key: str, model_key: str, detector_name: str, warmup: int = 500, window_size: int = 200):
@@ -301,12 +326,15 @@ def run_streaming_pipeline(dataset_key: str, model_key: str, detector_name: str,
         # Step 2: Build Model & Device Allocation
         TELEMETRY.stage = "MODEL_INIT"
         model = build_model(model_key, detector_name)
-        if "cuda" in model_key or "xgboost" in model_key:
-            TELEMETRY.device = "CUDA:0 (NVIDIA GeForce RTX 5070)"
-            TELEMETRY.log("Bound execution to NVIDIA GeForce RTX 5070 via CUDA runtime", details={"device": "cuda:0", "threads": 32})
+        hw = get_hardware_info()
+        if ("cuda" in model_key or "xgboost" in model_key) and hw["gpu"]["cuda_available"]:
+            TELEMETRY.device = f"CUDA:0 ({hw['gpu']['model']})"
+            TELEMETRY.log(f"Bound execution to {hw['gpu']['model']} via CUDA runtime", details={"device": "cuda:0"})
         else:
-            TELEMETRY.device = "CPU (32 Threads - AMD Ryzen 9 9955HX)"
-            TELEMETRY.log("Bound execution to AMD Ryzen 9 9955HX threadpool (32 threads)", details={"threads": 32})
+            cpu_name = hw["cpu"]["model"]
+            cpu_threads = hw["cpu"]["threads"]
+            TELEMETRY.device = f"CPU ({cpu_threads} Threads - {cpu_name})"
+            TELEMETRY.log(f"Bound execution to CPU threadpool ({cpu_threads} threads)", details={"threads": cpu_threads})
 
         # Step 3: Warmup Training (Training Data -> ML Model)
         TELEMETRY.stage = "WARMUP_TRAINING"
@@ -331,6 +359,7 @@ def run_streaming_pipeline(dataset_key: str, model_key: str, detector_name: str,
         total_streamed = 0
         rolling_correct: List[int] = []
         tp, fp, fn, tn = 0, 0, 0, 0
+        drift_in_current_window = False
         stream_start_t = time.perf_counter()
 
         for idx in range(warmup_samples, len(X)):
@@ -367,19 +396,19 @@ def run_streaming_pipeline(dataset_key: str, model_key: str, detector_name: str,
             adapt_time = (time.perf_counter() - t_adapt_start) * 1000.0
 
             if drift_occurred:
+                drift_in_current_window = True
                 TELEMETRY.stage = "DRIFT_ADAPTING"
                 TELEMETRY.drift_count += 1
                 TELEMETRY.adaptation_count += 1
                 TELEMETRY.adaptation_time_ms += adapt_time
 
-                # Record modification details
+                # Record modification details per event (actual event delta, not cumulative sum)
                 n_mod = 1
-                if hasattr(model, "components_updated"):
-                    n_mod = model.components_updated
-                    TELEMETRY.components_modified = n_mod
-                elif hasattr(model, "adaptation_count"):
-                    n_mod = model.adaptation_count
-                    TELEMETRY.components_modified = n_mod
+                if hasattr(model, "last_components_updated") and model.last_components_updated > 0:
+                    n_mod = model.last_components_updated
+                elif hasattr(model, "replacement_ratio"):
+                    n_mod = max(1, int(np.ceil(getattr(model, "n_estimators", 20) * getattr(model, "replacement_ratio", 0.3))))
+                TELEMETRY.components_modified = n_mod
 
                 mod_info = {
                     "sample_index": idx,
@@ -407,25 +436,35 @@ def run_streaming_pipeline(dataset_key: str, model_key: str, detector_name: str,
                 elapsed = time.perf_counter() - stream_start_t
                 acc = correct / total_streamed
                 w_acc = np.mean(rolling_correct) if rolling_correct else acc
-                precision = tp / max(1, (tp + fp))
-                recall = tp / max(1, (tp + fn))
-                f1 = (2 * precision * recall) / max(1e-6, (precision + recall))
+                
+                # Weighted F1 aligned with offline evaluation
+                n_pos = tp + fn
+                n_neg = tn + fp
+                n_tot = n_pos + n_neg
+                prec_1 = tp / max(1, (tp + fp))
+                rec_1 = tp / max(1, (tp + fn))
+                f1_1 = (2 * prec_1 * rec_1) / max(1e-6, (prec_1 + rec_1))
+                prec_0 = tn / max(1, (tn + fn))
+                rec_0 = tn / max(1, (tn + fp))
+                f1_0 = (2 * prec_0 * rec_0) / max(1e-6, (prec_0 + rec_0))
+                f1_weighted = ((n_pos * f1_1) + (n_neg * f1_0)) / max(1, n_tot)
 
                 TELEMETRY.current_sample = idx + 1
                 TELEMETRY.accuracy = acc
                 TELEMETRY.window_accuracy = float(w_acc)
-                TELEMETRY.f1_score = f1
+                TELEMETRY.f1_score = f1_weighted
                 TELEMETRY.throughput = total_streamed / max(1e-4, elapsed)
 
-                # Append trajectory point
+                # Append trajectory point with drift occurrence in window
                 if total_streamed % 100 == 0 or idx == len(X) - 1:
                     TELEMETRY.trajectory.append({
                         "sample": idx + 1,
                         "cumulative_acc": round(acc * 100, 2),
                         "window_acc": round(float(w_acc) * 100, 2),
-                        "f1": round(f1 * 100, 2),
-                        "drift": 1 if drift_occurred else 0,
+                        "f1": round(f1_weighted * 100, 2),
+                        "drift": 1 if drift_in_current_window else 0,
                     })
+                    drift_in_current_window = False
 
             # Slight yield for non-blocking UI responsiveness
             if total_streamed % 400 == 0:
@@ -448,12 +487,16 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         # Silence default terminal request logs to keep shell clean
         return
 
+    def _get_allowed_origin(self) -> str:
+        origin = self.headers.get("Origin", "")
+        return origin if origin in ("http://localhost:3000", "http://127.0.0.1:3000") else "http://localhost:3000"
+
     def _send_json(self, data: Any, status: int = 200):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", self._get_allowed_origin())
         self.end_headers()
         self.wfile.write(body)
 
@@ -462,13 +505,13 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", self._get_allowed_origin())
         self.end_headers()
         self.wfile.write(body)
 
     def do_OPTIONS(self):
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", self._get_allowed_origin())
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
@@ -478,17 +521,12 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/" or path == "/index.html":
-            html_path = os.path.join(os.path.dirname(__file__), "web", "index.html")
-            if os.path.exists(html_path):
-                with open(html_path, "rb") as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(content)))
-                self.end_headers()
-                self.wfile.write(content)
-            else:
-                self.send_error(404, "Frontend file not found")
+            self._send_json({
+                "status": "online",
+                "service": "Atreus Streaming Concept Drift ML Backend",
+                "frontend": "http://localhost:3000",
+                "api_docs": ["/api/hardware", "/api/status", "/api/datasets", "/api/run", "/api/stop", "/api/export"]
+            })
         elif path == "/api/hardware":
             self._send_json(get_hardware_info())
         elif path == "/api/status":
@@ -587,14 +625,14 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(400, f"Unsupported export format: {fmt}")
         elif path == "/api/datasets":
             datasets_list = [
-                {"id": "sea", "name": "SEA Concepts Benchmark (10k)", "features": 3, "type": "Synthetic Abrupt"},
-                {"id": "agrawal", "name": "Agrawal Stream Benchmark (10k)", "features": 9, "type": "Synthetic Subspace"},
-                {"id": "electricity", "name": "NSW Electricity Market (45k)", "features": 8, "type": "Real-World Recurring"},
-                {"id": "covertype", "name": "Forest Covertype Stream (30k)", "features": 54, "type": "Real-World Multi-Class"},
-                {"id": "airlines", "name": "Airlines Flight Delay Stream (15k)", "features": 7, "type": "Real-World Delay"},
-                {"id": "hf_adult", "name": "Hugging Face: Adult Census Income (32k)", "features": 14, "type": "Hugging Face"},
+                {"id": "sea", "name": "SEA Concepts Benchmark (5k)", "features": 3, "type": "Synthetic Abrupt"},
+                {"id": "agrawal", "name": "Agrawal Stream Benchmark (5k)", "features": 9, "type": "Synthetic Subspace"},
+                {"id": "electricity", "name": "NSW Electricity Market (10k)", "features": 8, "type": "Real-World Recurring"},
+                {"id": "covertype", "name": "Forest Covertype Stream (10k)", "features": 54, "type": "Real-World Multi-Class"},
+                {"id": "airlines", "name": "Airlines Flight Delay Stream (2k)", "features": 7, "type": "Real-World Delay"},
+                {"id": "hf_adult", "name": "Hugging Face: Adult Census Income (10k)", "features": 14, "type": "Hugging Face"},
                 {"id": "hf_bank", "name": "Hugging Face: Bank Marketing Stream (10k)", "features": 7, "type": "Hugging Face"},
-                {"id": "hf_credit", "name": "Hugging Face: Credit Default Risk (13k)", "features": 21, "type": "Hugging Face"},
+                {"id": "hf_credit", "name": "Hugging Face: Credit Default Risk (10k)", "features": 21, "type": "Hugging Face"},
             ]
             if os.path.exists("data/custom_stream.csv"):
                 datasets_list.append({"id": "custom", "name": "Custom Added Dataset (data/custom_stream.csv)", "features": "Auto", "type": "User Added"})
@@ -608,6 +646,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > MAX_CONTENT_LENGTH:
+            self.send_error(413, "Payload Too Large (Maximum 50MB permitted)")
+            return
+
         post_data = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
         try:
             payload = json.loads(post_data)
@@ -615,24 +657,38 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             payload = {}
 
         if path == "/api/run":
-            if TELEMETRY.running:
-                self._send_json({"status": "error", "message": "Pipeline already running"}, status=400)
-                return
+            with RUN_LOCK:
+                if TELEMETRY.running:
+                    self._send_json({"status": "error", "message": "Pipeline already running"}, status=400)
+                    return
 
-            dataset_key = payload.get("dataset", "sea")
-            model_key = payload.get("model", "proposed")
-            detector_name = payload.get("detector", "adwin")
-            warmup = int(payload.get("warmup", 500))
-            window = int(payload.get("window", 200))
+                dataset_key = str(payload.get("dataset", "sea")).lower()
+                model_key = str(payload.get("model", "proposed")).lower()
+                detector_name = str(payload.get("detector", "adwin")).lower()
 
-            TELEMETRY.should_stop = False
-            STREAM_THREAD = threading.Thread(
-                target=run_streaming_pipeline,
-                args=(dataset_key, model_key, detector_name, warmup, window),
-                daemon=True,
-            )
-            STREAM_THREAD.start()
-            self._send_json({"status": "started", "dataset": dataset_key, "model": model_key, "detector": detector_name})
+                if dataset_key not in VALID_DATASETS:
+                    self._send_json({"status": "error", "message": f"Unknown dataset key: {dataset_key}"}, status=400)
+                    return
+                if model_key not in VALID_MODELS:
+                    self._send_json({"status": "error", "message": f"Unknown model key: {model_key}"}, status=400)
+                    return
+
+                try:
+                    warmup = max(10, min(10000, int(payload.get("warmup", 500))))
+                    window = max(10, min(5000, int(payload.get("window", 200))))
+                except (ValueError, TypeError):
+                    self._send_json({"status": "error", "message": "Invalid warmup or window parameter"}, status=400)
+                    return
+
+                TELEMETRY.running = True
+                TELEMETRY.should_stop = False
+                STREAM_THREAD = threading.Thread(
+                    target=run_streaming_pipeline,
+                    args=(dataset_key, model_key, detector_name, warmup, window),
+                    daemon=True,
+                )
+                STREAM_THREAD.start()
+                self._send_json({"status": "started", "dataset": dataset_key, "model": model_key, "detector": detector_name})
 
         elif path == "/api/stop":
             TELEMETRY.should_stop = True
@@ -646,6 +702,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             target_path = "data/custom_stream.csv"
 
             if hf_id:
+                if not re.match(r"^[a-zA-Z0-9_\-\.]+\/[a-zA-Z0-9_\-\.]+$", hf_id):
+                    self._send_json({"status": "error", "message": "Invalid Hugging Face ID format. Expected 'namespace/dataset_name'."}, status=400)
+                    return
                 try:
                     from datasets import load_dataset
                     ds = load_dataset(hf_id, split="train")
@@ -669,9 +728,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
 
 def start_server(port: int = 8000):
-    server_address = ("0.0.0.0", port)
+    server_address = ("127.0.0.1", port)
     httpd = ThreadingHTTPServer(server_address, AppRequestHandler)
-    print(f"Starting server on http://localhost:{port}")
+    print(f"Starting server on http://127.0.0.1:{port}")
     httpd.serve_forever()
 
 

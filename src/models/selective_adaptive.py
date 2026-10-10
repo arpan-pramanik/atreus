@@ -5,10 +5,9 @@ upon detected concept drift, preserving stable knowledge while cutting computati
 """
 
 import time
-from typing import Optional, List, Tuple
+from typing import Optional, List
 import numpy as np
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.base import clone
 from src.detectors.base import BaseDriftDetector
 from src.detectors.adwin import ADWINDetector
 
@@ -64,6 +63,7 @@ class SelectiveAdaptiveEnsemble:
         self.is_fitted: bool = False
         self.adaptation_count: int = 0
         self.components_updated_count: int = 0
+        self.last_components_updated: int = 0
         self.total_adaptation_time: float = 0.0
         self.drift_events: List[int] = []
         self.warning_events: List[int] = []
@@ -146,29 +146,34 @@ class SelectiveAdaptiveEnsemble:
         2. Replace only those with new trees trained on recent concept data.
         3. Recalibrate ensemble weights.
         """
-        t0 = time.perf_counter()
+        # Hold out 30% of recent buffer to prevent in-sample weight inflation
+        n_samples = len(X_train)
+        val_size = max(10, int(0.3 * n_samples))
+        X_fit, y_fit = X_train[:-val_size], y_train[:-val_size]
+        X_val, y_val = X_train[-val_size:], y_train[-val_size:]
+
         k_replace = max(1, int(np.ceil(self.n_estimators * self.replacement_ratio)))
         
-        # Evaluate component errors on recent window
-        comp_errors = self._evaluate_components_on_buffer(X_train, y_train)
+        # Evaluate component errors on recent validation window
+        comp_errors = self._evaluate_components_on_buffer(X_val, y_val)
         
         # Identify worst components (highest error)
         worst_indices = np.argsort(comp_errors)[-k_replace:]
         
-        n_samples = len(X_train)
+        n_fit = len(X_fit)
         for idx in worst_indices:
-            boot_idx = self.rng.choice(n_samples, size=n_samples, replace=True)
+            boot_idx = self.rng.choice(n_fit, size=n_fit, replace=True)
             new_tree = DecisionTreeClassifier(
                 max_depth=self.max_depth,
                 random_state=self.rng.randint(0, 100000),
                 max_features="sqrt",
             )
-            new_tree.fit(X_train[boot_idx], y_train[boot_idx])
+            new_tree.fit(X_fit[boot_idx], y_fit[boot_idx])
             self.estimators[idx] = new_tree
             self.estimator_ages[idx] = 0
 
-        # Recalculate weights for the entire ensemble
-        updated_errors = self._evaluate_components_on_buffer(X_train, y_train)
+        # Recalculate weights for the entire ensemble on held-out validation buffer
+        updated_errors = self._evaluate_components_on_buffer(X_val, y_val)
         self.estimator_errors = updated_errors
         # Softmax / exponential weighting based on accuracy (1 - error)
         accuracies = np.clip(1.0 - updated_errors, 1e-4, 1.0)
@@ -177,6 +182,7 @@ class SelectiveAdaptiveEnsemble:
 
         self.adaptation_count += 1
         self.components_updated_count += k_replace
+        self.last_components_updated = k_replace
         t1 = time.perf_counter()
         self.total_adaptation_time += (t1 - t0)
 

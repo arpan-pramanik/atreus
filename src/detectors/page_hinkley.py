@@ -5,9 +5,8 @@ from src.detectors.base import BaseDriftDetector
 
 try:
     from river.drift import PageHinkley as RiverPageHinkley
-    HAS_RIVER = True
-except ImportError:
-    HAS_RIVER = False
+except ImportError as e:
+    raise ImportError("river is required for Page-Hinkley drift detection. Install it via 'pip install river'.") from e
 
 
 class PageHinkleyDetector(BaseDriftDetector):
@@ -29,28 +28,23 @@ class PageHinkleyDetector(BaseDriftDetector):
         self.threshold = threshold
         self.alpha = alpha
         self.mode = mode
-        self._detector = (
-            RiverPageHinkley(
-                min_instances=min_instances,
-                delta=delta,
-                threshold=threshold,
-                alpha=alpha,
-                mode=mode,
-            )
-            if HAS_RIVER
-            else None
+        self._detector = RiverPageHinkley(
+            min_instances=min_instances,
+            delta=delta,
+            threshold=threshold,
+            alpha=alpha,
+            mode=mode,
         )
 
     def reset(self) -> None:
         """Reset internal statistics."""
-        if HAS_RIVER:
-            self._detector = RiverPageHinkley(
-                min_instances=self.min_instances,
-                delta=self.delta,
-                threshold=self.threshold,
-                alpha=self.alpha,
-                mode=self.mode,
-            )
+        self._detector = RiverPageHinkley(
+            min_instances=self.min_instances,
+            delta=self.delta,
+            threshold=self.threshold,
+            alpha=self.alpha,
+            mode=self.mode,
+        )
         self.drift_detected = False
         self.warning_detected = False
 
@@ -68,10 +62,9 @@ class PageHinkleyDetector(BaseDriftDetector):
         self.drift_detected = False
         self.warning_detected = False
 
-        if self._detector is not None:
-            self._detector.update(val)
-            if self._detector.drift_detected:
-                self.drift_detected = True
-                self.drifts_detected_count += 1
+        self._detector.update(val)
+        if self._detector.drift_detected:
+            self.drift_detected = True
+            self.drifts_detected_count += 1
 
         return self.drift_detected, self.warning_detected

@@ -5,7 +5,7 @@ margin adaptation and learning rate boosting as specified in plan.md and PPT.
 """
 
 import time
-from typing import Optional, Any, List
+from typing import Optional, List
 import numpy as np
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler

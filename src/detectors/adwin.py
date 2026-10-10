@@ -5,9 +5,8 @@ from src.detectors.base import BaseDriftDetector
 
 try:
     from river.drift import ADWIN as RiverADWIN
-    HAS_RIVER = True
-except ImportError:
-    HAS_RIVER = False
+except ImportError as e:
+    raise ImportError("river is required for ADWIN drift detection. Install it via 'pip install river'.") from e
 
 
 class ADWINDetector(BaseDriftDetector):
@@ -21,7 +20,7 @@ class ADWINDetector(BaseDriftDetector):
         self.delta = delta
         self.clock = clock
         self.max_buckets = max_buckets
-        self._detector = RiverADWIN(delta=delta, clock=clock, max_buckets=max_buckets) if HAS_RIVER else None
+        self._detector = RiverADWIN(delta=delta, clock=clock, max_buckets=max_buckets)
 
     def update(self, val: float) -> Tuple[bool, bool]:
         """
@@ -37,16 +36,14 @@ class ADWINDetector(BaseDriftDetector):
         self.drift_detected = False
         self.warning_detected = False
 
-        if self._detector is not None:
-            self._detector.update(val)
-            if self._detector.drift_detected:
-                self.drift_detected = True
-                self.drifts_detected_count += 1
+        self._detector.update(val)
+        if self._detector.drift_detected:
+            self.drift_detected = True
+            self.drifts_detected_count += 1
         return self.drift_detected, self.warning_detected
 
     def reset(self) -> None:
         """Reset ADWIN internal state."""
-        if HAS_RIVER:
-            self._detector = RiverADWIN(delta=self.delta, clock=self.clock, max_buckets=self.max_buckets)
+        self._detector = RiverADWIN(delta=self.delta, clock=self.clock, max_buckets=self.max_buckets)
         self.drift_detected = False
         self.warning_detected = False

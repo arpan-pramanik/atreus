@@ -14,15 +14,14 @@ Integrates the full design from plan.md and Concept_Drift_Framework.pptx:
 """
 
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Optional, Tuple
 import numpy as np
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.ensemble import HistGradientBoostingClassifier
 from src.detectors.base import BaseDriftDetector
-from src.detectors.adwin import ADWINDetector
 from src.detectors.ddm import DDMDetector
+from src.models.framework_pipeline import OnlineStandardScaler
 
 
 class ConceptFingerprint:
@@ -84,13 +83,15 @@ class SelfHealingMetaEnsemble:
         self.stm_buffer_y: List[int] = []
         self.ltm_concepts: List[Tuple[ConceptFingerprint, List[DecisionTreeClassifier]]] = []
 
-        # Online Feature Relevance Tracker
+        # Online Feature Relevance Tracker & Scaler
+        self.scaler: Optional[OnlineStandardScaler] = None
         self.selected_feature_indices: Optional[np.ndarray] = None
         self.feature_scores: Optional[np.ndarray] = None
 
         # Statistics & Health
         self.is_fitted: bool = False
         self.adaptation_count: int = 0
+        self.last_components_updated: int = 0
         self.zero_shot_recalls: int = 0
         self.total_adaptation_time: float = 0.0
         self.drift_events: List[int] = []
@@ -120,8 +121,13 @@ class SelfHealingMetaEnsemble:
 
     def fit_initial(self, X: np.ndarray, y: np.ndarray) -> None:
         """Initial heterogeneous ensemble fit and LTM initialization."""
-        self.selected_feature_indices = self._select_features(X, y)
-        X_sub = X[:, self.selected_feature_indices]
+        self.scaler = OnlineStandardScaler(n_features=X.shape[1])
+        for xi in X:
+            self.scaler.update(xi)
+        X_scaled = np.array([self.scaler.transform(xi) for xi in X])
+
+        self.selected_feature_indices = self._select_features(X_scaled, y)
+        X_sub = X_scaled[:, self.selected_feature_indices]
 
         n_samples = len(X)
         self.tree_estimators = []
@@ -160,8 +166,9 @@ class SelfHealingMetaEnsemble:
         if not self.is_fitted:
             return np.array([0.5, 0.5])
 
+        x_scaled = self.scaler.transform(x) if self.scaler is not None else x
         indices = self.selected_feature_indices if self.selected_feature_indices is not None else np.arange(len(x))
-        x_sub = x[indices].reshape(1, -1)
+        x_sub = x_scaled[indices].reshape(1, -1)
 
         probas = np.zeros(2)
         total_weight = 0.0
@@ -206,6 +213,7 @@ class SelfHealingMetaEnsemble:
     def _check_and_recall_ltm_concept(self, X_current: np.ndarray, y_current: np.ndarray) -> bool:
         """
         Zero-Shot Concept Recall: check if incoming drifted stream matches an archived concept in LTM.
+        Calibrated threshold prevents premature recall on novel distributions.
         """
         if len(self.ltm_concepts) == 0:
             return False
@@ -219,11 +227,15 @@ class SelfHealingMetaEnsemble:
                 min_dist = dist
                 best_trees = archived_trees
 
-        # Matching threshold for recurring concept
-        if min_dist < 0.65 and best_trees is not None:
-            # Instant zero-shot concept reactivation without retraining!
+        # Calibrated matching threshold for recurring concept
+        if min_dist < 0.20 and best_trees is not None:
+            # Instant zero-shot concept reactivation without retraining
             self.tree_estimators = list(best_trees)
             self.zero_shot_recalls += 1
+            # Reset tree detectors and weights to avoid immediate false-alarm refiring
+            for det in self.tree_detectors:
+                det.reset()
+            self.tree_weights = np.ones(self.n_tree_components)
             return True
 
         return False
@@ -242,9 +254,16 @@ class SelfHealingMetaEnsemble:
             self.stm_buffer_X.pop(0)
             self.stm_buffer_y.pop(0)
 
-        # Incremental online learning for SVM and Naive Bayes
+        # Scale streaming sample for SGD/SVM stability
+        if self.scaler is not None:
+            self.scaler.update(x)
+            x_scaled = self.scaler.transform(x)
+        else:
+            x_scaled = x
+
+        # Incremental online learning for SVM and Naive Bayes on scaled features
         indices = self.selected_feature_indices if self.selected_feature_indices is not None else np.arange(len(x))
-        x_sub = x[indices].reshape(1, -1)
+        x_sub = x_scaled[indices].reshape(1, -1)
         try:
             self.svm_estimator.partial_fit(x_sub, [y], classes=[0, 1])
             self.nb_estimator.partial_fit(x_sub, [y], classes=[0, 1])
@@ -275,19 +294,30 @@ class SelfHealingMetaEnsemble:
             self.drift_events.append(sample_idx)
             X_stm = np.array(self.stm_buffer_X)
             y_stm = np.array(self.stm_buffer_y)
-            X_stm_sub = X_stm[:, self.selected_feature_indices]
+            X_stm_scaled = (
+                np.array([self.scaler.transform(xi) for xi in X_stm])
+                if self.scaler is not None
+                else X_stm
+            )
+            X_stm_sub = X_stm_scaled[:, self.selected_feature_indices]
 
             # 1. First, attempt Zero-Shot LTM Recall
             recalled = self._check_and_recall_ltm_concept(X_stm_sub, y_stm)
 
             if not recalled and len(np.unique(y_stm)) > 1:
                 # 2. Re-evaluate online feature relevance
-                self.selected_feature_indices = self._select_features(X_stm, y_stm)
-                X_stm_sub = X_stm[:, self.selected_feature_indices]
+                new_indices = self._select_features(X_stm_scaled, y_stm)
+                subset_changed = (
+                    self.selected_feature_indices is None
+                    or not np.array_equal(new_indices, self.selected_feature_indices)
+                )
+                self.selected_feature_indices = new_indices
+                X_stm_sub = X_stm_scaled[:, self.selected_feature_indices]
 
-                # 3. Selectively replace drifting components
+                # 3. Retrain all trees if feature mapping changed; otherwise replace drifting components
+                to_retrain = list(range(self.n_tree_components)) if subset_changed else drift_signals
                 n_samples = len(X_stm)
-                for idx in drift_signals:
+                for idx in to_retrain:
                     boot_idx = self.rng.choice(n_samples, size=n_samples, replace=True)
                     new_tree = DecisionTreeClassifier(
                         max_depth=12,
@@ -304,6 +334,11 @@ class SelfHealingMetaEnsemble:
                 if len(self.ltm_concepts) >= self.ltm_max_archived_concepts:
                     self.ltm_concepts.pop(0)
                 self.ltm_concepts.append((new_fp, list(self.tree_estimators)))
+                self.last_components_updated = len(to_retrain)
+            elif recalled:
+                self.last_components_updated = 0
+            else:
+                self.last_components_updated = 0
 
             self.adaptation_count += len(drift_signals)
             self.total_adaptation_time += (time.perf_counter() - t0)
