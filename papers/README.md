@@ -55,3 +55,14 @@ This directory contains foundational and advanced research papers directly guidi
 - **Contributions to Framework**:
   - Heterogeneous model diversity: Decision Trees + Linear Margins (Online SGD/SVM) + Naive Bayes.
   - Meta-learning concept fingerprinting for fast recovery.
+
+---
+
+### 6. DriftMoE: Mixture of Experts for Streaming Classification with Concept Drift
+- **Authors**: Miguel Aspis, Sebastián A. Cajas Ordóñez, Andrés L. Suárez-Cetrulo, Ricardo Simón Carbajo
+- **Venue**: *Proceedings of the European Conference on Machine Learning and Principles and Practice of Knowledge Discovery in Databases (ECML PKDD 2025 / 2026)*
+- **Contributions to Framework**:
+  - **Dynamic Gating Router**: Online Softmax router selecting Top-K experts per streaming instance with symbiotic multi-hot correctness feedback.
+  - **Heterogeneous Hardware-Accelerated Expert Pool**: Co-locates NVIDIA CUDA GPU-resident Gradient Boosted Decision Trees (XGBoost `hist`), Subspace Decision Trees, and Online Incremental Margin classifiers.
+  - **Micro-Adaptation**: Component-level drift tracking replacing solely the degraded experts to prevent catastrophic forgetting.
+

@@ -44,18 +44,22 @@ class GPUAcceleratedAdaptiveXGBoost:
 
     def _build_model(self) -> xgb.XGBClassifier:
         """Instantiate XGBoost classifier with hardware acceleration."""
+        target_dev = "cuda:0" if self.device.startswith("cuda") else "cpu"
         try:
-            return xgb.XGBClassifier(
+            clf = xgb.XGBClassifier(
                 n_estimators=self.n_estimators,
                 max_depth=self.max_depth,
                 learning_rate=self.learning_rate,
                 tree_method="hist",
-                device=self.device,
+                device=target_dev,
                 random_state=42,
                 eval_metric="logloss",
             )
+            self.device = target_dev
+            return clf
         except Exception:
             # Fallback to high-performance multicore CPU
+            self.device = "cpu"
             return xgb.XGBClassifier(
                 n_estimators=self.n_estimators,
                 max_depth=self.max_depth,
@@ -69,25 +73,28 @@ class GPUAcceleratedAdaptiveXGBoost:
     def fit_initial(self, X: np.ndarray, y: np.ndarray) -> None:
         """Initial training."""
         self.model = self._build_model()
-        self.model.fit(X, y)
+        self.model.fit(X.astype(np.float32), y.astype(int))
         self.is_fitted = True
         for xi, yi in zip(X[-self.buffer_size :], y[-self.buffer_size :]):
             self.buffer_X.append(xi)
             self.buffer_y.append(yi)
 
-    def predict_one(self, x: np.ndarray) -> int:
-        """Predict single instance."""
-        if not self.is_fitted or self.model is None:
-            return 0
-        x_2d = x.reshape(1, -1).astype(np.float32)
-        return int(self.model.predict(x_2d)[0])
-
     def predict_proba_one(self, x: np.ndarray) -> np.ndarray:
-        """Predict class probability."""
+        """Predict class probability with direct CUDA DMatrix to eliminate warning overhead."""
         if not self.is_fitted or self.model is None:
             return np.array([0.5, 0.5])
         x_2d = x.reshape(1, -1).astype(np.float32)
-        return self.model.predict_proba(x_2d)[0]
+        try:
+            booster = self.model.get_booster()
+            p1 = float(booster.predict(xgb.DMatrix(x_2d))[0])
+            return np.array([1.0 - p1, p1])
+        except Exception:
+            return self.model.predict_proba(x_2d)[0]
+
+    def predict_one(self, x: np.ndarray) -> int:
+        """Predict single instance."""
+        proba = self.predict_proba_one(x)
+        return int(np.argmax(proba))
 
     def update_sample(self, x: np.ndarray, y: int, sample_idx: int = 0) -> bool:
         """Update stream buffer, check drift, adapt model."""

@@ -506,6 +506,7 @@ export default function ControlPanel() {
                   onChange={(e) => setSelectedModel(e.target.value)}
                 >
                   <option value="proposed">Proposed Selective Adapt (RF + SVM + Online Scaler)</option>
+                  <option value="drift_moe">DriftMoE (2026 Mixture of Experts + RTX 5070 CUDA)</option>
                   <option value="boosted_forest">Boosted ARF-DWM Forest (Shadow Trees)</option>
                   <option value="dual_memory">Self-Healing Dual-Memory Meta-Ensemble</option>
                   <option value="xgboost_cuda">Hardware-Accelerated Adaptive XGBoost (RTX 5070 CUDA)</option>

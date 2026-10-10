@@ -20,6 +20,7 @@ from src.models.xgboost_adaptive import GPUAcceleratedAdaptiveXGBoost
 from src.models.adaptive_svm import AdaptiveOnlineSVM
 from src.models.self_healing_meta_ensemble import SelfHealingMetaEnsemble
 from src.models.framework_pipeline import SelfHealingConceptDriftFramework
+from src.models.drift_moe import DriftMoEClassifier
 
 # Datasets
 from src.datasets.synthetic import (
@@ -322,6 +323,22 @@ class TestAllModelArchitectures:
 
         for i in range(50, 100):
             model.update_sample(X[i], y[i], sample_idx=i)
+
+    def test_drift_moe(self, stream_data):
+        X, y, _ = stream_data
+        model = DriftMoEClassifier(n_experts=4, top_k=2, cuda_device="cuda:0", name="Test DriftMoE")
+        model.fit_initial(X[:50], y[:50])
+
+        pred = model.predict_one(X[51])
+        assert pred in [0, 1]
+        proba = model.predict_proba_one(X[51])
+        assert len(proba) == 2
+        assert np.isclose(np.sum(proba), 1.0)
+
+        for i in range(50, 100):
+            model.update_sample(X[i], y[i], sample_idx=i)
+        assert model.is_fitted
+        assert model.router is not None
 
 
 class TestEvaluatorAndVisualizer:

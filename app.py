@@ -44,6 +44,7 @@ from src.models.boosted_adaptive_forest import BoostedAdaptiveForest
 from src.models.self_healing_meta_ensemble import SelfHealingMetaEnsemble
 from src.models.xgboost_adaptive import GPUAcceleratedAdaptiveXGBoost
 from src.models.adaptive_svm import AdaptiveOnlineSVM
+from src.models.drift_moe import DriftMoEClassifier
 
 MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
 RUN_LOCK = threading.Lock()
@@ -54,7 +55,7 @@ VALID_DATASETS = {
 }
 
 VALID_MODELS = {
-    "proposed", "boosted_forest", "dual_memory", "xgboost_cuda",
+    "proposed", "drift_moe", "boosted_forest", "dual_memory", "xgboost_cuda",
     "full_retrain", "adaptive_svm", "selective", "static",
 }
 
@@ -280,7 +281,11 @@ def build_model(model_key: str, detector_name: str):
         raise ValueError(f"Unknown model key: {model_key}")
 
     det = build_detector(detector_name)
-    if model_key == "proposed":
+    if model_key == "drift_moe":
+        hw = get_hardware_info()
+        dev = "cuda:0" if hw["gpu"]["cuda_available"] else "cpu"
+        return DriftMoEClassifier(n_experts=6, top_k=2, cuda_device=dev, name="DriftMoE (2026 Mixture of Experts + CUDA)")
+    elif model_key == "proposed":
         return SelfHealingConceptDriftFramework(n_trees=25, drift_detector=det, name="Proposed Selective Adapt")
     elif model_key == "boosted_forest":
         d_type = "eddm" if "eddm" in detector_name.lower() else ("ddm" if "ddm" in detector_name.lower() else "adwin")
@@ -327,7 +332,7 @@ def run_streaming_pipeline(dataset_key: str, model_key: str, detector_name: str,
         TELEMETRY.stage = "MODEL_INIT"
         model = build_model(model_key, detector_name)
         hw = get_hardware_info()
-        if ("cuda" in model_key or "xgboost" in model_key) and hw["gpu"]["cuda_available"]:
+        if ("cuda" in model_key or "xgboost" in model_key or "moe" in model_key) and hw["gpu"]["cuda_available"]:
             TELEMETRY.device = f"CUDA:0 ({hw['gpu']['model']})"
             TELEMETRY.log(f"Bound execution to {hw['gpu']['model']} via CUDA runtime", details={"device": "cuda:0"})
         else:
